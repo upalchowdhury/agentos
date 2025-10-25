@@ -1,18 +1,55 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
 
-# Other files and folders
-.settings/
+# Node/TypeScript
+node_modules/
+dist/
+*.log
+.npm
+.env.local
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
 
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+# Rust
+target/
+Cargo.lock
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Secrets
+*.key
+*.pem
+.env
+secrets/
+
+# Build artifacts
+bin/
+build/
+*.tar.gz

@@ -1,0 +1,29 @@
+replicaCount: 2
+
+image:
+  repository: agentos/identity
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 3000
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+env:
+  - name: PORT
+    value: "3000"
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: agentos-secrets
+        key: database-url
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: "otel-collector:4317"

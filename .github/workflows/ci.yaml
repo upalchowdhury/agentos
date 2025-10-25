@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Run tests
+        working-directory: services/gateway
+        run: |
+          go mod download
+          go test -v -cover ./...
+          go vet ./...
+
+  test-identity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install dependencies
+        working-directory: services/identity
+        run: npm ci
+      
+      - name: Run linter
+        working-directory: services/identity
+        run: npm run lint
+      
+      - name: Run tests
+        working-directory: services/identity
+        run: npm test
+
+  test-memory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        working-directory: services/memory
+        run: |
+          pip install poetry
+          poetry install
+      
+      - name: Run linter
+        working-directory: services/memory
+        run: |
+          poetry run black --check .
+          poetry run ruff check .
+      
+      - name: Run tests
+        working-directory: services/memory
+        run: poetry run pytest
+
+  test-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+      
+      - name: Run tests
+        working-directory: services/policy-engine
+        run: |
+          cargo fmt -- --check
+          cargo clippy -- -D warnings
+          cargo test
+
+  build:
+    needs: [test-gateway, test-identity, test-memory, test-policy]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [gateway, identity, memory, policy-engine]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build Docker image
+        run: |
+          docker build -t agentos/${{ matrix.service }}:${{ github.sha }} \
+            services/${{ matrix.service }}

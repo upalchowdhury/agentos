@@ -1,0 +1,25 @@
+{
+  "name": "@agentos/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Agent Economy OS",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["agent", "ai", "sdk", "distributed"],
+  "author": "Agent Economy OS Team",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "axios": "^1.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "@types/jest": "^29.5.11",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.3"
+  }
+}

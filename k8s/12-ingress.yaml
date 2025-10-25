@@ -1,0 +1,48 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agentos-ingress
+  namespace: agentos
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: agentos.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: web-ui
+            port:
+              number: 80
+      - path: /api/gateway
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8080
+      - path: /api/identity
+        pathType: Prefix
+        backend:
+          service:
+            name: identity
+            port:
+              number: 3000
+      - path: /api/memory
+        pathType: Prefix
+        backend:
+          service:
+            name: memory
+            port:
+              number: 8000
+      - path: /api/policy
+        pathType: Prefix
+        backend:
+          service:
+            name: policy-engine
+            port:
+              number: 8081

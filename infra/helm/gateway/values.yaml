@@ -1,0 +1,52 @@
+replicaCount: 3
+
+image:
+  repository: agentos/gateway
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: api.agentos.io
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+env:
+  - name: IDENTITY_SERVICE_URL
+    value: "http://identity-service:3000"
+  - name: POLICY_SERVICE_URL
+    value: "http://policy-engine:8081"
+  - name: MEMORY_SERVICE_URL
+    value: "http://memory-service:8000"
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: "otel-collector:4317"
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  path: /metrics

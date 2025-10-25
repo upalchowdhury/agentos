@@ -1,0 +1,47 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrations
+  namespace: agentos
+spec:
+  template:
+    metadata:
+      labels:
+        app: db-migrations
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:16-alpine
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h postgres -U postgres; do
+            echo "Waiting for postgres..."
+            sleep 2
+          done
+      containers:
+      - name: migrate
+        image: postgres:16-alpine
+        command:
+        - sh
+        - -c
+        - |
+          echo "Running migrations..."
+          psql $DATABASE_URL -f /migrations/001_initial_schema.sql
+          psql $DATABASE_URL -f /migrations/002_add_indexes.sql
+          echo "Migrations complete"
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: agentos-secrets
+              key: DATABASE_URL
+        volumeMounts:
+        - name: migrations
+          mountPath: /migrations
+      volumes:
+      - name: migrations
+        configMap:
+          name: db-migrations

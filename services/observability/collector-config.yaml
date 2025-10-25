@@ -1,0 +1,49 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+  
+  attributes:
+    actions:
+      - key: service.namespace
+        value: agent-economy-os
+        action: insert
+  
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: ${ENVIRONMENT:-development}
+        action: insert
+
+exporters:
+  logging:
+    loglevel: info
+    
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: agentos
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, attributes, resource]
+      exporters: [logging]
+    
+    metrics:
+      receivers: [otlp]
+      processors: [batch, attributes, resource]
+      exporters: [prometheus, logging]
+    
+    logs:
+      receivers: [otlp]
+      processors: [batch, attributes, resource]
+      exporters: [logging]

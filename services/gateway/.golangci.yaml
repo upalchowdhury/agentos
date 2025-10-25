@@ -1,0 +1,27 @@
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - gocritic
+    - revive
+    - cyclop
+
+linters-settings:
+  cyclop:
+    max-complexity: 10
+  revive:
+    rules:
+      - name: max-public-structs
+        arguments: [5]
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0

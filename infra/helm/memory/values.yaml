@@ -1,0 +1,29 @@
+replicaCount: 2
+
+image:
+  repository: agentos/memory
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+env:
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: agentos-secrets
+        key: database-url
+  - name: QDRANT_URL
+    value: "http://qdrant:6333"
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    value: "otel-collector:4317"
