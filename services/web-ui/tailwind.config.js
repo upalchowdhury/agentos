@@ -3,8 +3,16 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  darkMode: 'class',
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        primary: '#007BFF',
+      },
+      fontFamily: {
+        display: ['Inter', 'sans-serif'],
+      },
+    },
   },
   plugins: [],
 }

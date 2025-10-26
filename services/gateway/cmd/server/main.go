@@ -36,6 +36,7 @@ func main() {
 		IdentityServiceURL: getEnv("IDENTITY_SERVICE_URL", "http://localhost:3000"),
 		PolicyServiceURL:   getEnv("POLICY_SERVICE_URL", "http://localhost:8081"),
 		MemoryServiceURL:   getEnv("MEMORY_SERVICE_URL", "http://localhost:8000"),
+		RuntimeServiceURL:  getEnv("RUNTIME_SERVICE_URL", "http://localhost:8000"),
 	})
 
 	// Register protocol adapters
@@ -56,6 +57,13 @@ func main() {
 	// Routes
 	r.HandleFunc("/a2a/v1/invoke", a2aAdapter.HandleInvoke).Methods("POST")
 	r.HandleFunc("/mcp/v1/call", mcpAdapter.HandleCall).Methods("POST")
+	
+	// Runtime service proxy routes
+	r.HandleFunc("/api/v1/agents/deploy", agentRouter.ProxyToDeploy).Methods("POST")
+	r.HandleFunc("/api/v1/agents/invoke", agentRouter.ProxyToInvoke).Methods("POST")
+	r.HandleFunc("/api/v1/agents/{id}/status", agentRouter.ProxyToStatus).Methods("GET")
+	r.HandleFunc("/api/v1/agents/{id}", agentRouter.ProxyToDelete).Methods("DELETE")
+	
 	r.HandleFunc("/health", healthHandler).Methods("GET")
 	r.HandleFunc("/metrics", promhttp.Handler().ServeHTTP).Methods("GET")
 

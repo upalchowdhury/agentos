@@ -26,6 +26,7 @@ type Config struct {
 	IdentityServiceURL string
 	PolicyServiceURL   string
 	MemoryServiceURL   string
+	RuntimeServiceURL  string
 }
 
 func NewRouter(config *Config) *Router {
@@ -259,4 +260,57 @@ func (r *Router) storeInteraction(ctx context.Context, req *types.AgentRequest, 
 	}
 
 	return nil
+}
+
+// Runtime service proxy handlers
+func (r *Router) ProxyToDeploy(w http.ResponseWriter, req *http.Request) {
+	r.proxyToRuntime(w, req, "/api/v1/agents/deploy")
+}
+
+func (r *Router) ProxyToInvoke(w http.ResponseWriter, req *http.Request) {
+	r.proxyToRuntime(w, req, "/api/v1/agents/invoke")
+}
+
+func (r *Router) ProxyToStatus(w http.ResponseWriter, req *http.Request) {
+	r.proxyToRuntime(w, req, req.URL.Path)
+}
+
+func (r *Router) ProxyToDelete(w http.ResponseWriter, req *http.Request) {
+	r.proxyToRuntime(w, req, req.URL.Path)
+}
+
+func (r *Router) proxyToRuntime(w http.ResponseWriter, req *http.Request, path string) {
+	url := r.config.RuntimeServiceURL + path
+	
+	proxyReq, err := http.NewRequestWithContext(req.Context(), req.Method, url, req.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to create proxy request: %v", err), http.StatusInternalServerError)
+		return
+	}
+	
+	for name, values := range req.Header {
+		for _, value := range values {
+			proxyReq.Header.Add(name, value)
+		}
+	}
+	
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to proxy request: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	
+	for name, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
+	
+	w.WriteHeader(resp.StatusCode)
+	
+	var buf bytes.Buffer
+	buf.ReadFrom(resp.Body)
+	w.Write(buf.Bytes())
 }

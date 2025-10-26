@@ -189,6 +189,57 @@ app.get('/api/v1/rbac/roles', async (_req, res) => {
   }
 });
 
+// Dashboard Stats
+app.get('/api/v1/dashboard/stats', async (_req, res) => {
+  try {
+    const stats = await pool.query(`
+      SELECT 
+        (SELECT COUNT(*) FROM dids) as total_agents,
+        (SELECT COUNT(*) FROM credentials WHERE NOT revoked) as active_credentials,
+        (SELECT COUNT(*) FROM agent_roles) as role_assignments,
+        (SELECT COUNT(DISTINCT agent_did) FROM agent_roles) as agents_with_roles,
+        (SELECT COUNT(*) FROM content_violations WHERE created_at > NOW() - INTERVAL '24 hours') as violations_24h
+    `);
+    
+    const agentsByType = await pool.query(`
+      SELECT 
+        COALESCE(document->'metadata'->>'agentType', 'unknown') as agent_type,
+        COUNT(*) as count
+      FROM dids
+      GROUP BY document->'metadata'->>'agentType'
+      ORDER BY count DESC
+    `);
+    
+    const recentAgents = await pool.query(`
+      SELECT 
+        id,
+        COALESCE(document->'metadata'->>'agentType', 'unknown') as agent_type,
+        document->'metadata' as metadata,
+        created_at
+      FROM dids
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+    
+    const roleStats = await pool.query(`
+      SELECT r.name, r.description, COUNT(ar.agent_did) as agent_count
+      FROM roles r
+      LEFT JOIN agent_roles ar ON r.name = ar.role_name
+      GROUP BY r.name, r.description
+      ORDER BY agent_count DESC
+    `);
+
+    res.json({
+      summary: stats.rows[0],
+      agentsByType: agentsByType.rows,
+      recentAgents: recentAgents.rows,
+      roleStats: roleStats.rows
+    });
+  } catch (error) {
+    res.status(500).json({ error: (error as Error).message });
+  }
+});
+
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'healthy' });

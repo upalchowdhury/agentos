@@ -105,39 +105,36 @@ export const agentAPI = {
     health: () => api.get('/gateway/health'),
   },
 
-  // Dashboard stats (mock for now - would come from observability service)
+  // Dashboard stats
   dashboard: {
-    getMetrics: async () => {
-      // In production, this would query ClickHouse/Prometheus
-      return {
-        activeAgents: 127,
-        throughput: 1234,
-        cost: 847,
-        alerts: 3,
-      };
+    getStats: async () => {
+      const response = await api.get('/identity/dashboard/stats');
+      return response.data;
     },
-    
-    getAgentStats: async () => {
-      // Mock data - in production, aggregate from interactions table
-      return [
-        {
-          name: 'fraud-detector-v2',
-          status: 'critical',
-          calls: 23441,
-          cost: 847,
-          latency: 156,
-          errorRate: 0.3,
-        },
-        {
-          name: 'customer-support-orchestrator',
-          status: 'healthy',
-          calls: 18923,
-          cost: 234,
-          latency: 289,
-          errorRate: 0.1,
-        },
-      ];
-    },
+  },
+
+  // Runtime Service
+  runtime: {
+    deploy: (data: {
+      agent_id: string;
+      code: string;
+      requirements: string[];
+      environment: Record<string, string> | null;
+      max_memory: string;
+      max_cpu: string;
+    }) => api.post('/v1/agents/deploy', data),
+
+    invoke: (data: {
+      agent_id: string;
+      input_data: Record<string, any>;
+      timeout: number;
+    }) => api.post('/v1/agents/invoke', data),
+
+    getStatus: (agentId: string) =>
+      api.get(`/v1/agents/${agentId}/status`),
+
+    delete: (agentId: string) =>
+      api.delete(`/v1/agents/${agentId}`),
   },
 };
 

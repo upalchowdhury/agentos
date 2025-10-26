@@ -1,150 +1,49 @@
-import { useQuery } from '@tanstack/react-query';
-import { Activity, DollarSign, AlertTriangle, Users } from 'lucide-react';
-import { agentAPI } from '../lib/api';
+import { Link } from 'react-router-dom';
+import { StatCard } from './Dashboard/StatCard';
+import { ChartCard } from './Dashboard/ChartCard';
+import { InvocationsTable } from './Dashboard/InvocationsTable';
 
 export function Dashboard() {
-  const { data: metrics, isLoading } = useQuery({
-    queryKey: ['metrics'],
-    queryFn: () => agentAPI.dashboard.getMetrics(),
-    refetchInterval: 5000, // Refresh every 5s
-  });
-
-  const { data: agentStats } = useQuery({
-    queryKey: ['agentStats'],
-    queryFn: () => agentAPI.dashboard.getAgentStats(),
-    refetchInterval: 10000,
-  });
-
-  if (isLoading) {
-    return <div className="p-8">Loading...</div>;
-  }
-
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Control Plane Dashboard</h1>
-        <div className="text-sm text-gray-500">
-          Last Updated: {new Date().toLocaleTimeString()}
+    <div>
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
+        <p className="text-gray-900 dark:text-white text-3xl font-black leading-tight">
+          Dashboard
+        </p>
+        <div className="flex items-center gap-4">
+          <Link
+            to="/agents"
+            className="flex min-w-[84px] items-center justify-center rounded-lg h-10 px-4 bg-gray-200 dark:bg-gray-800 text-gray-900 dark:text-white text-sm font-bold hover:bg-gray-300 dark:hover:bg-gray-700 transition-colors"
+          >
+            <span className="truncate">View All Agents</span>
+          </Link>
+          <Link
+            to="/deploy"
+            className="flex min-w-[84px] items-center justify-center rounded-lg h-10 px-4 bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 transition-colors"
+          >
+            <span className="truncate">Deploy Agent</span>
+          </Link>
         </div>
       </div>
 
-      {/* Key Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <MetricCard
-          icon={<Users className="w-8 h-8" />}
-          label="Active Agents"
-          value={metrics?.activeAgents || 0}
-          change="+12 from yesterday"
-          color="blue"
-        />
-        <MetricCard
-          icon={<Activity className="w-8 h-8" />}
-          label="Throughput"
-          value={`${metrics?.throughput || 0}/s`}
-          change="calls/second"
-          color="green"
-        />
-        <MetricCard
-          icon={<DollarSign className="w-8 h-8" />}
-          label="Cost (Last Hour)"
-          value={`$${metrics?.cost || 0}`}
-          change="↑ 23% from avg"
-          color="orange"
-        />
-        <MetricCard
-          icon={<AlertTriangle className="w-8 h-8" />}
-          label="Active Alerts"
-          value={metrics?.alerts || 0}
-          change="2 critical, 1 warning"
-          color="red"
-        />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+        <StatCard title="Total Agents" value="12" change="+10%" />
+        <StatCard title="Active Deployments" value="5" change="+5%" />
+        <StatCard title="Total Invocations" value="1,234" change="+20%" />
+        <StatCard title="Total Cost" value="$5,678.90" change="+15%" />
       </div>
 
-      {/* Agent Table */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="p-4 border-b">
-          <h2 className="text-xl font-semibold">Top Agents by Activity</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Agent Name
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Calls (1h)
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Cost (1h)
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Avg Latency
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                  Error Rate
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {agentStats?.map((agent: any) => (
-                <tr key={agent.name} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="font-medium text-gray-900">{agent.name}</div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <StatusBadge status={agent.status} />
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">{agent.calls.toLocaleString()}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">${agent.cost}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">{agent.latency}ms</td>
-                  <td className="px-6 py-4 whitespace-nowrap">{agent.errorRate}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <ChartCard
+          title="Invocations (Last 30 Days)"
+          value="1,234"
+          timeRange="Last 30 Days"
+          change="+20%"
+        />
+        <ChartCard title="Cost (Last 30 Days)" value="$5,678.90" timeRange="Last 30 Days" change="+15%" />
       </div>
+
+      <InvocationsTable />
     </div>
-  );
-}
-
-function MetricCard({ icon, label, value, change, color }: any) {
-  const colors = {
-    blue: 'from-blue-500 to-blue-600',
-    green: 'from-green-500 to-green-600',
-    orange: 'from-orange-500 to-orange-600',
-    red: 'from-red-500 to-red-600',
-  };
-
-  return (
-    <div className={`bg-gradient-to-br ${colors[color as keyof typeof colors]} text-white rounded-lg p-6 shadow-lg`}>
-      <div className="flex items-center justify-between">
-        <div className="flex-1">
-          <div className="text-sm opacity-90">{label}</div>
-          <div className="text-3xl font-bold mt-2">{value}</div>
-          <div className="text-xs opacity-80 mt-2">{change}</div>
-        </div>
-        <div className="opacity-80">{icon}</div>
-      </div>
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const colors = {
-    healthy: 'bg-green-100 text-green-800',
-    critical: 'bg-red-100 text-red-800',
-    warning: 'bg-yellow-100 text-yellow-800',
-    degraded: 'bg-orange-100 text-orange-800',
-  };
-
-  return (
-    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${colors[status as keyof typeof colors]}`}>
-      {status.charAt(0).toUpperCase() + status.slice(1)}
-    </span>
   );
 }
