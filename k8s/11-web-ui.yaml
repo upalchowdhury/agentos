@@ -18,7 +18,7 @@ spec:
       containers:
       - name: web-ui
         image: agentos/web-ui:0.1.0
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Never
         ports:
         - containerPort: 80
           name: http
