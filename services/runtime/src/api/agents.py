@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -47,9 +48,9 @@ async def deploy_agent(request: DeploymentRequest):
             AgentStatus.RUNNING.value,
             request.code,
             code_hash,
-            resource_limits,
+            json.dumps(resource_limits),
             deployed_at,
-            {"requirements": request.requirements, "environment": request.environment}
+            json.dumps({"requirements": request.requirements, "environment": request.environment})
         )
         
         logger.info(f"Deployed agent {request.agent_id} with deployment_id {deployment_id}")

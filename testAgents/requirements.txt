@@ -1,0 +1,7 @@
+streamlit
+agno
+python-dotenv
+requests
+duckduckgo-search
+aiohttp>=3.9.0
+google-genai
