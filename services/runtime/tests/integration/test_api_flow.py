@@ -8,6 +8,8 @@ import httpx
 from datetime import datetime
 
 
+pytestmark = pytest.mark.skip(reason="Requires running runtime service and backing Postgres database")
+
 BASE_URL = "http://localhost:8000"
 TEST_TOKEN = "test_user_token"
 

@@ -4,9 +4,9 @@ Handles proxying requests to external agent endpoints (OpenAI, Agentforce, MCP, 
 """
 
 import logging
+from typing import Any, Dict, Optional
+
 import httpx
-from typing import Dict, Any, Optional
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,6 @@ class ExternalAgentProxy:
         self.auth_config = auth_config
         self.timeout = timeout
         self.rate_limit = rate_limit or {"rps": 10, "burst": 20}
-        self.client = httpx.AsyncClient(timeout=timeout)
     
     async def invoke(
         self,
@@ -67,12 +66,13 @@ class ExternalAgentProxy:
             # Make request to external endpoint
             logger.info(f"Proxying request to {self.endpoint_url}")
             
-            response = await self.client.post(
-                self.endpoint_url,
-                json=input_data,
-                headers=headers,
-                timeout=timeout
-            )
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    self.endpoint_url,
+                    json=input_data,
+                    headers=headers,
+                    timeout=timeout
+                )
             
             if response.status_code != 200:
                 logger.error(f"External agent returned {response.status_code}: {response.text}")
@@ -118,11 +118,11 @@ class ExternalAgentProxy:
         try:
             health_url = f"{self.endpoint_url.rstrip('/')}{health_path}"
             
-            response = await self.client.get(
-                health_url,
-                headers=self._build_auth_headers(),
-                timeout=5.0
-            )
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(
+                    health_url,
+                    headers=self._build_auth_headers(),
+                )
             
             is_healthy = response.status_code == 200
             

@@ -6,7 +6,7 @@ import pytest
 from datetime import datetime
 from pydantic import ValidationError
 
-from src.models_v2 import (
+from services.runtime.src.models_v2 import (
     ModelType,
     AgentStatus,
     Runtime,

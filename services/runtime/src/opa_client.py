@@ -26,7 +26,6 @@ class OPAClient:
     
     def __init__(self, opa_url: str = "http://localhost:8181"):
         self.opa_url = opa_url.rstrip('/')
-        self.client = httpx.AsyncClient(timeout=5.0)
     
     async def check_invoke_permission(
         self,
@@ -80,10 +79,11 @@ class OPAClient:
         
         try:
             # Query OPA decision endpoint
-            response = await self.client.post(
-                f"{self.opa_url}/v1/data/agentos/authz",
-                json=input_doc
-            )
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    f"{self.opa_url}/v1/data/agentos/authz",
+                    json=input_doc
+                )
             
             if response.status_code != 200:
                 logger.error(f"OPA returned non-200 status: {response.status_code}")
@@ -148,10 +148,11 @@ class OPAClient:
         }
         
         try:
-            response = await self.client.post(
-                f"{self.opa_url}/v1/data/agentos/authz/a2a_permission_exists",
-                json=input_doc
-            )
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(
+                    f"{self.opa_url}/v1/data/agentos/authz/a2a_permission_exists",
+                    json=input_doc
+                )
             
             if response.status_code == 200:
                 result = response.json()

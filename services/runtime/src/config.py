@@ -1,4 +1,6 @@
 import logging
+from typing import Optional
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -40,6 +42,7 @@ class Settings(BaseSettings):
     # Services
     IDENTITY_SERVICE_URL: str = Field(default="http://identity:3000")
     GATEWAY_SERVICE_URL: str = Field(default="http://gateway:8080")
+    OPA_URL: Optional[str] = Field(default=None)
     
     @property
     def database_url(self) -> str:

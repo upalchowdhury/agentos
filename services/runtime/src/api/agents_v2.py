@@ -13,10 +13,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Header
 from fastapi.responses import JSONResponse
 
+from ..agents.builder import agent_builder
 from ..agents.executor import AgentExecutor
-from ..agents.builder import AgentBuilder  # NEW: Build images for Model A
 from ..agents.proxy import ExternalAgentProxy  # NEW: Proxy for Model B
+from ..config import settings
 from ..database import db
+from ..opa_client import OPAClient
 from ..models_v2 import (
     ModelType,
     AgentStatus,
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
 executor = AgentExecutor()
+opa_client = OPAClient(settings.OPA_URL) if settings.OPA_URL else None
 
 
 # ============================================================================
@@ -78,7 +81,7 @@ async def create_model_a_agent(
     """
     try:
         agent_id = uuid.uuid4()
-        deployment_id = uuid.uuid4()
+        version_id = uuid.uuid4()
         
         # Insert agent record
         agent_query = """
@@ -105,23 +108,33 @@ async def create_model_a_agent(
         # Create agent version record
         version_query = """
         INSERT INTO agent_versions (
-            id, agent_id, version_number, requirements_json, env_json, resources_json, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            id,
+            agent_id,
+            version_number,
+            artifact_uri,
+            requirements_json,
+            env_json,
+            resources_json,
+            created_at,
+            build_status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         """
         
         await db.execute(
             version_query,
-            deployment_id,
+            version_id,
             agent_id,
-            1,  # version 1
+            1,
+            f"pending://{version_id}",
             json.dumps(request.requirements),
-            json.dumps(request.env),  # TODO: Encrypt sensitive values
+            json.dumps(request.env or {}),
             json.dumps(request.resources or {"cpu": "500m", "mem": "512Mi"}),
-            datetime.utcnow()
+            datetime.utcnow(),
+            BuildStatus.PENDING.value,
         )
         
         # Generate signed upload URL (stub - integrate with S3/minio)
-        upload_url = f"https://artifacts.agentos.io/upload/{agent_id}/{deployment_id}?sig=stub"
+        upload_url = f"https://artifacts.agentos.io/upload/{agent_id}/{version_id}?sig=stub"
         expires_at = datetime.utcnow() + timedelta(hours=1)
         
         logger.info(f"Created Model A agent {agent_id} for user {user_id}")
@@ -129,7 +142,7 @@ async def create_model_a_agent(
         return UploadArtifactResponse(
             agent_id=str(agent_id),
             upload_url=upload_url,
-            deployment_id=str(deployment_id),
+            deployment_id=str(version_id),
             expires_at=expires_at
         )
         
@@ -186,45 +199,45 @@ async def upload_artifact(
         if not version:
             raise HTTPException(status_code=404, detail="No version found for agent")
         
-        deployment_id = version['id']
+        version_id = version['id']
         
-        # Save artifact (stub - save to S3/minio)
-        artifact_uri = f"s3://agentos-artifacts/{agent_id}/{deployment_id}.zip"
-        
-        # Update version with artifact info
-        await db.execute("""
-            UPDATE agent_versions
-            SET artifact_uri = $1,
-                artifact_checksum = $2,
-                artifact_size_bytes = $3,
-                build_status = $4
-            WHERE id = $5
-        """, artifact_uri, actual_checksum, len(contents), BuildStatus.IN_PROGRESS.value, deployment_id)
-        
-        # Update agent status
         await db.execute(
             "UPDATE agents SET status = $1 WHERE id = $2",
             AgentStatus.BUILDING.value,
             uuid.UUID(agent_id)
         )
-        
-        # Trigger build (async - using background job queue in production)
-        # For now, return immediately with IN_PROGRESS status
-        logger.info(f"Artifact uploaded for agent {agent_id}, triggering build")
-        
-        # TODO: Trigger actual build pipeline
-        # await AgentBuilder.build_image(agent_id, deployment_id, artifact_uri)
-        
-        return BuildStatusResponse(
-            agent_id=agent_id,
-            deployment_id=str(deployment_id),
-            status=BuildStatus.IN_PROGRESS,
-            logs=["Artifact received", "Starting build pipeline..."],
-            image_ref=None,
-            error=None,
-            started_at=datetime.utcnow(),
-            completed_at=None
+
+        await db.execute(
+            """
+            UPDATE agent_versions
+            SET build_status = $1,
+                build_logs = $2
+            WHERE id = $3
+            """,
+            BuildStatus.IN_PROGRESS.value,
+            "Artifact received",
+            version_id,
         )
+
+        try:
+            build_response = await agent_builder.build_image(
+                uuid.UUID(agent_id),
+                version_id,
+                contents,
+                file.filename or "agent.py",
+            )
+        except Exception as exc:
+            await agent_builder.mark_failure(
+                uuid.UUID(agent_id),
+                version_id,
+                str(exc),
+                logs=["Build pipeline failed"],
+            )
+            logger.error("Build failed for agent %s: %s", agent_id, exc)
+            raise HTTPException(status_code=500, detail=f"Build failed: {exc}") from exc
+        
+        logger.info("Artifact processed for agent %s", agent_id)
+        return build_response
         
     except HTTPException:
         raise
@@ -312,8 +325,8 @@ async def create_model_b_agent(
             ModelType.B.value,
             AgentStatus.RUNNING.value,  # External agents are immediately "running"
             str(request.endpoint_url),
-            json.dumps(request.auth.dict()),
-            json.dumps(request.rate_limit.dict()),
+            json.dumps(request.auth.model_dump()),
+            json.dumps(request.rate_limit.model_dump()),
             now,
             now
         )
@@ -438,26 +451,95 @@ async def invoke_agent(
     """
     try:
         # Get agent details
-        agent = await db.fetchrow("""
-            SELECT id, model_type, status, runtime, image_ref, endpoint_url, auth_config
+        agent = await db.fetchrow(
+            """
+            SELECT
+                id,
+                owner_id,
+                model_type,
+                status,
+                runtime,
+                image_ref,
+                endpoint_url,
+                auth_config,
+                rate_limit_config,
+                metadata
             FROM agents
             WHERE id = $1
-        """, uuid.UUID(agent_id))
+            """,
+            uuid.UUID(agent_id),
+        )
         
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         
         if agent['status'] != AgentStatus.RUNNING.value:
             raise HTTPException(status_code=503, detail=f"Agent status is {agent['status']}")
-        
-        # TODO: Check RBAC/OPA
-        # decision = await opa_client.check_permission(user_id, agent_id, "invoke")
-        # if not decision['allow']:
-        #     return InvocationResult with status=DENIED
-        
+
         invocation_id = uuid.uuid4()
         started_at = datetime.utcnow()
-        
+
+        policy_metadata: dict = {}
+
+        if opa_client:
+            decision = await opa_client.check_invoke_permission(
+                subject_id=user_id,
+                subject_type="user",
+                agent_id=agent_id,
+                agent_data={
+                    "owner_id": agent.get("owner_id"),
+                    "model_type": agent['model_type'],
+                    "metadata": agent.get("metadata") or {},
+                },
+                caller_agent_id=request.caller_agent_id,
+            )
+
+            if not decision.get("allow", False):
+                ended_at = datetime.utcnow()
+                execution_time_ms = int((ended_at - started_at).total_seconds() * 1000)
+
+                await db.execute(
+                    """
+                    INSERT INTO invocations (
+                        id, agent_id, requester_id, caller_agent_id,
+                        input_data, output_data, status,
+                        started_at, ended_at, execution_time_ms,
+                        cost_decimal, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    """,
+                    invocation_id,
+                    uuid.UUID(agent_id),
+                    user_id,
+                    uuid.UUID(request.caller_agent_id) if request.caller_agent_id else None,
+                    json.dumps(request.input_data, default=str),
+                    json.dumps(None),
+                    InvocationStatus.DENIED.value,
+                    started_at,
+                    ended_at,
+                    execution_time_ms,
+                    0.0,
+                    json.dumps({"opa": decision}, default=str),
+                )
+
+                logger.info(
+                    "Invocation denied by OPA for agent %s (decision: %s)",
+                    agent_id,
+                    decision.get("deny_reason"),
+                )
+
+                return InvocationResult(
+                    invocation_id=str(invocation_id),
+                    agent_id=agent_id,
+                    status=InvocationStatus.DENIED,
+                    result=None,
+                    error=decision.get("deny_reason", "not_authorized"),
+                    execution_time_ms=execution_time_ms,
+                    cost=0.0,
+                    metadata=decision.get("obligations", {}),
+                    invoked_at=started_at,
+                )
+            policy_metadata = decision.get("obligations", {})
+
         # Route based on model type
         if agent['model_type'] == ModelType.A.value:
             # Model A: Execute code on our infrastructure
@@ -469,10 +551,13 @@ async def invoke_agent(
         ended_at = datetime.utcnow()
         execution_time_ms = int((ended_at - started_at).total_seconds() * 1000)
         
-        # Calculate cost (stub - integrate with cost calculator)
-        cost = 0.01  # Stub value
+        cost = float(result.get('cost', 0.0) or 0.0)
         
         # Record invocation
+        result_metadata = result.get('metadata', {}) or {}
+        if policy_metadata:
+            result_metadata = {**result_metadata, "opa_obligations": policy_metadata}
+
         await db.execute("""
             INSERT INTO invocations (
                 id, agent_id, requester_id, caller_agent_id,
@@ -485,14 +570,14 @@ async def invoke_agent(
             uuid.UUID(agent_id),
             user_id,
             uuid.UUID(request.caller_agent_id) if request.caller_agent_id else None,
-            json.dumps(request.input_data),
-            json.dumps(result.get('result')),
+            json.dumps(request.input_data, default=str),
+            json.dumps(result.get('result'), default=str),
             result.get('status', InvocationStatus.SUCCESS.value),
             started_at,
             ended_at,
             execution_time_ms,
             cost,
-            json.dumps(result.get('metadata', {}))
+            json.dumps(result_metadata, default=str)
         )
         
         logger.info(f"Invoked agent {agent_id}, invocation_id {invocation_id}, status {result.get('status')}")
@@ -505,7 +590,7 @@ async def invoke_agent(
             error=result.get('error'),
             execution_time_ms=execution_time_ms,
             cost=cost,
-            metadata=result.get('metadata', {}),
+            metadata=result_metadata,
             invoked_at=started_at
         )
         
@@ -518,62 +603,75 @@ async def invoke_agent(
 
 async def _execute_model_a(agent, input_data: dict, timeout: int) -> dict:
     """Execute Model A agent (code on our infrastructure)"""
-    # Get latest version code
-    version = await db.fetchrow("""
-        SELECT v.id, d.code
-        FROM agent_versions v
-        JOIN agent_deployments d ON v.agent_id = d.agent_did::uuid
-        WHERE v.agent_id = $1 AND v.build_status = 'SUCCESS'
-        ORDER BY v.version_number DESC
+    deployment = await db.fetchrow(
+        """
+        SELECT id, code
+        FROM agent_deployments
+        WHERE agent_did = $1 AND status = $2
+        ORDER BY deployed_at DESC
         LIMIT 1
-    """, agent['id'])
-    
-    if not version:
+        """,
+        str(agent["id"]),
+        AgentStatus.RUNNING.value,
+    )
+
+    if not deployment:
         return {
-            'status': InvocationStatus.ERROR.value,
-            'error': 'No successful build found for agent',
-            'result': None
+            "status": InvocationStatus.ERROR.value,
+            "error": "No active deployment found for agent",
+            "result": None,
         }
-    
-    # Execute using executor
+
     try:
-        result = await executor.execute(
-            agent_id=str(agent['id']),
-            code=version['code'],
+        execution_payload = await executor.execute(
+            agent_id=str(agent["id"]),
+            code=deployment["code"],
             input_data=input_data,
-            timeout=timeout
+            timeout=timeout,
         )
         return {
-            'status': InvocationStatus.SUCCESS.value,
-            'result': result,
-            'error': None
+            "status": InvocationStatus.SUCCESS.value,
+            "result": execution_payload,
+            "metadata": {"deployment_id": str(deployment["id"])},
+            "cost": execution_payload["cost_cents"] / 100,
+            "error": None,
         }
-    except Exception as e:
+    except Exception as exc:  # pragma: no cover - surfaced in response
         return {
-            'status': InvocationStatus.ERROR.value,
-            'result': None,
-            'error': str(e)
+            "status": InvocationStatus.ERROR.value,
+            "result": None,
+            "error": str(exc),
         }
 
 
 async def _execute_model_b(agent, input_data: dict, timeout: int) -> dict:
     """Execute Model B agent (proxy to external endpoint)"""
-    # TODO: Implement external proxy
-    # proxy = ExternalAgentProxy(agent['endpoint_url'], agent['auth_config'])
-    # result = await proxy.invoke(input_data, timeout)
-    
-    # Stub implementation
-    return {
-        'status': InvocationStatus.SUCCESS.value,
-        'result': {
-            'message': 'Model B proxy not yet implemented',
-            'input_received': input_data
-        },
-        'error': None,
-        'metadata': {
-            'endpoint': agent['endpoint_url'],
-            'model_type': 'B'
+    auth_config = agent["auth_config"] or {}
+    rate_limit = agent["rate_limit_config"] or {}
+
+    proxy = ExternalAgentProxy(
+        agent["endpoint_url"],
+        auth_config,
+        timeout=timeout,
+        rate_limit=rate_limit,
+    )
+
+    try:
+        proxy_result = await proxy.invoke(input_data, timeout)
+    except Exception as exc:
+        return {
+            "status": InvocationStatus.ERROR.value,
+            "result": None,
+            "error": str(exc),
+            "metadata": {"endpoint": agent["endpoint_url"]},
         }
+
+    return {
+        "status": InvocationStatus.SUCCESS.value,
+        "result": proxy_result.get("result"),
+        "error": None,
+        "metadata": proxy_result.get("metadata", {}),
+        "cost": proxy_result.get("cost", 0.0),
     }
 
 

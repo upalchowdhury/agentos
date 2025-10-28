@@ -6,7 +6,7 @@ Supports Model A (code upload) and Model B (registry) patterns
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator, ConfigDict
 
 
 class ModelType(str, Enum):
@@ -58,8 +58,8 @@ class CreateModelARequest(BaseModel):
     runtime: Runtime = Field(default=Runtime.PYTHON_3_11, description="Runtime environment")
     requirements: list[str] = Field(default_factory=list, max_length=50, description="Package dependencies")
     env: dict[str, str] = Field(default_factory=dict, description="Environment variables (masked)")
-    resources: Optional[dict[str, str]] = Field(
-        default=None,
+    resources: dict[str, str] = Field(
+        default_factory=lambda: {"cpu": "500m", "mem": "512Mi"},
         description="Resource limits: {cpu: '500m', mem: '1Gi'}"
     )
     
@@ -75,9 +75,7 @@ class CreateModelARequest(BaseModel):
     
     @field_validator('resources')
     @classmethod
-    def validate_resources(cls, v: Optional[dict]) -> Optional[dict]:
-        if v is None:
-            return {"cpu": "500m", "mem": "512Mi"}
+    def validate_resources(cls, v: dict[str, str]) -> dict[str, str]:
         # Validate CPU format
         cpu = v.get('cpu', '500m')
         if not (cpu.endswith('m') or cpu.replace('.', '').isdigit()):
@@ -86,7 +84,10 @@ class CreateModelARequest(BaseModel):
         mem = v.get('mem', '512Mi')
         if not any(mem.endswith(unit) for unit in ['Mi', 'Gi', 'M', 'G']):
             raise ValueError("Invalid memory format (use '512Mi' or '1Gi')")
-        return v
+        return {
+            'cpu': cpu,
+            'mem': mem,
+        }
 
 
 class UploadArtifactResponse(BaseModel):
@@ -106,16 +107,17 @@ class AuthConfig(BaseModel):
     type: AuthScheme = Field(..., description="Auth scheme")
     value: Optional[str] = Field(None, description="Token value for bearer auth")
     header_name: Optional[str] = Field(None, description="Header name for header auth")
-    
-    @field_validator('value', 'header_name')
-    @classmethod
-    def validate_auth_fields(cls, v, info):
-        auth_type = info.data.get('type')
-        if auth_type == AuthScheme.BEARER and not info.data.get('value'):
+
+    @model_validator(mode="after")
+    def validate_combination(self) -> "AuthConfig":
+        if self.type == AuthScheme.BEARER and not self.value:
             raise ValueError("Bearer auth requires 'value'")
-        if auth_type == AuthScheme.HEADER and not info.data.get('header_name'):
-            raise ValueError("Header auth requires 'header_name'")
-        return v
+        if self.type == AuthScheme.HEADER:
+            if not self.header_name:
+                raise ValueError("Header auth requires 'header_name'")
+            if not self.value:
+                raise ValueError("Header auth requires 'value'")
+        return self
 
 
 class RateLimitConfig(BaseModel):
@@ -140,6 +142,7 @@ class CreateModelBRequest(BaseModel):
 
 class AgentResponse(BaseModel):
     """Unified agent representation"""
+    model_config = ConfigDict(protected_namespaces=())
     agent_id: str = Field(..., description="Unique identifier")
     name: str = Field(..., description="Agent name")
     owner_id: str = Field(..., description="Owner user/team ID")

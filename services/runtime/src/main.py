@@ -9,22 +9,25 @@ from .api import agents, health
 from .config import settings
 from .database import db
 
+logger = logging.getLogger(__name__)
+
 # Import enhanced APIs
 try:
     from .api import agents_v2
+
     HAS_V2_API = True
-except ImportError:
+except ImportError as exc:
     HAS_V2_API = False
-    logger.warning("V2 API not available")
+    logger.warning("V2 API not available: %s", exc)
 
 # Import OpenTelemetry (optional)
 try:
-    from .telemetry import init_telemetry, TelemetryConfig
-    HAS_TELEMETRY = True
-except ImportError:
-    HAS_TELEMETRY = False
+    from .telemetry import TelemetryConfig, setup_telemetry
 
-logger = logging.getLogger(__name__)
+    HAS_TELEMETRY = True
+except ImportError as exc:
+    HAS_TELEMETRY = False
+    logger.debug("Telemetry not enabled: %s", exc)
 
 
 @asynccontextmanager
@@ -34,14 +37,16 @@ async def lifespan(app: FastAPI):
     # Initialize OpenTelemetry if available
     if HAS_TELEMETRY:
         try:
-            init_telemetry(TelemetryConfig(
-                service_name="runtime-service",
-                service_version="0.2.0",
-                # Configure exporters as needed:
-                # jaeger_endpoint="http://localhost:14268/api/traces",
-                # otlp_endpoint="http://localhost:4317",
-                enable_console_export=False  # Set to True for debugging
-            ))
+            setup_telemetry(
+                TelemetryConfig(
+                    service_name="runtime-service",
+                    service_version="0.2.0",
+                    # Configure exporters as needed:
+                    # jaeger_endpoint="http://localhost:14268/api/traces",
+                    # otlp_endpoint="http://localhost:4317",
+                    enable_console_export=False,  # Set to True for debugging
+                )
+            )
             logger.info("OpenTelemetry initialized")
         except Exception as e:
             logger.warning(f"OpenTelemetry initialization failed: {e}")

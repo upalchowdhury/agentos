@@ -4,14 +4,12 @@ A production-grade FastAPI service for deploying and executing AI agents in the 
 
 ## Features
 
-- **Agent Deployment**: Deploy agents with custom code and resource limits
-- **Agent Invocation**: Execute deployed agents with input data and timeouts
-- **Status Monitoring**: Track agent deployments, invocations, and metrics
-- **Safe Execution**: Restricted Python environment for secure code execution
-- **Cost Tracking**: Track execution time and estimated costs per invocation
-- **Database Persistence**: PostgreSQL with async connection pooling
-- **Health Checks**: Built-in health endpoints for monitoring
-- **RESTful API**: OpenAPI/Swagger documentation included
+- **Model A (Runtime Build Pipeline)**: Upload Python artifacts, build sandboxed images, and auto-provision execution endpoints.
+- **Model B (External Registry)**: Register 3rd-party agents (OpenAI, Salesforce, MCP, custom HTTP) with centralized rate limits and health tracking.
+- **Secured Execution**: Hardened executor with restricted built-ins, deterministic cost metering, and configurable timeouts.
+- **Governance Hooks**: Optional OPA integration for RBAC/obligations and audit-ready invocation logging.
+- **Persistent State**: PostgreSQL schema for agents, versions, invocations, and aggregated cost metrics.
+- **Observability**: Health endpoint plus structured logs, with placeholders for metrics and tracing exporters.
 
 ## Architecture
 
@@ -20,21 +18,28 @@ services/runtime/
 ├── src/
 │   ├── main.py           # FastAPI application with lifespan management
 │   ├── config.py         # Settings and configuration
-│   ├── models.py         # Pydantic models and enums
+│   ├── models.py         # Legacy Pydantic models and enums
+│   ├── models_v2.py      # Unified Model A & B schemas
 │   ├── database.py       # Async database connection pool
 │   ├── agents/
 │   │   ├── executor.py   # Agent code execution engine
+│   │   ├── builder.py    # Artifact handling and deployment wiring
+│   │   ├── proxy.py      # External agent proxy integration
 │   │   ├── deployer.py   # Container deployment (TODO)
 │   │   └── monitor.py    # Metrics collection (TODO)
 │   └── api/
 │       ├── agents.py     # Agent deployment and invocation endpoints
+│       ├── agents_v2.py  # Model A/B APIs with registry support
 │       └── health.py     # Health check endpoints
 ├── tests/
+│   ├── conftest.py       # Test helpers (path setup)
 │   ├── test_executor.py  # Executor unit tests
 │   ├── test_deployer.py  # Deployer module tests
-│   └── test_api.py       # API integration tests
+│   ├── test_api.py       # Import smoke tests
+│   └── integration/      # (Skipped) requires live service + DB
+├── artifacts/            # Local artifact cache (gitignored)
 ├── requirements.txt      # Python dependencies
-├── Dockerfile           # Container image definition
+├── Dockerfile            # Container image definition
 └── .env.example         # Environment variables template
 ```
 
@@ -74,11 +79,12 @@ services/runtime/
    ```bash
    # Ensure PostgreSQL is running, then:
    psql -h localhost -U agentos -d agentos -f ../../infra/migrations/004_runtime_schema.sql
+   psql -h localhost -U agentos -d agentos -f ../../infra/migrations/005_enhanced_runtime_schema.sql
    ```
 
 6. **Start the service:**
    ```bash
-   python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+   python -m src.main  # or `uvicorn services.runtime.src.main:app --reload`
    ```
 
 7. **Access the API:**
@@ -88,54 +94,49 @@ services/runtime/
 
 ## API Endpoints
 
-### Deployment
+### Model A (Code Upload)
 
-**POST /api/v1/agents/deploy**
+- **POST `/v1/agents/modelA`** – Create an agent shell, returns upload URL and deployment ID.
+- **PUT `/v1/agents/{agent_id}/artifact`** – Upload a Python file/zip, triggers build and runtime deployment.
+- **GET `/v1/agents/{agent_id}/build`** – Retrieve build status, logs, and image reference.
 
-Deploy a new agent with custom code.
-
-```json
-{
-  "agent_id": "my-agent",
-  "code": "result = input_data['x'] + input_data['y']",
-  "requirements": [],
-  "environment": null,
-  "max_memory": "512m",
-  "max_cpu": "0.5"
-}
-```
-
-### Invocation
-
-**POST /api/v1/agents/invoke**
-
-Execute a deployed agent.
+Sample deploy payload:
 
 ```json
 {
-  "agent_id": "my-agent",
-  "input_data": {"x": 10, "y": 20},
-  "timeout": 30
+  "name": "my-analysis-agent",
+  "runtime": "python3.11",
+  "requirements": ["pandas"],
+  "env": {"OPENAI_API_KEY": "sk-..."},
+  "resources": {"cpu": "500m", "mem": "1Gi"}
 }
 ```
 
-### Status
+### Model B (External Registry)
 
-**GET /api/v1/agents/{agent_id}/status**
+- **POST `/v1/agents/modelB`** – Register an external endpoint with auth and rate limits.
+- **POST `/v1/agents/{agent_id}/invoke`** – Unified invocation (proxy for Model B, runtime for Model A).
+- **GET `/v1/agents/{agent_id}`** – Inspect agent metadata, status, and cost.
+- **DELETE `/v1/agents/{agent_id}`** – Soft-delete/terminate an agent (all models).
 
-Get agent deployment and invocation statistics.
+Example registry payload:
 
-### Deletion
+```json
+{
+  "name": "external-openai-agent",
+  "endpoint_url": "https://api.openai.com/v1/assistants",
+  "auth": {"type": "bearer", "value": "sk-test"},
+  "rate_limit": {"rps": 10, "burst": 20}
+}
+```
 
-**DELETE /api/v1/agents/{agent_id}**
+### Legacy Runtime (v1)
 
-Terminate an agent deployment.
-
-### Health
-
-**GET /health**
-
-Check service health (database connectivity, executor status).
+- **POST `/api/v1/agents/deploy`** – Inline code deploy (backwards compatibility).
+- **POST `/api/v1/agents/invoke`** – Invoke legacy agents.
+- **GET `/api/v1/agents/{agent_id}/status`** – Deployment summary.
+- **DELETE `/api/v1/agents/{agent_id}`** – Terminate latest deployment.
+- **GET `/health`** – Health probe.
 
 ## Testing
 
@@ -241,6 +242,7 @@ Key settings:
 - `DEFAULT_MEMORY_LIMIT`: Default memory limit for agents
 - `DEFAULT_CPU_LIMIT`: Default CPU limit for agents
 - `MAX_EXECUTION_TIME`: Maximum execution timeout (seconds)
+- `OPA_URL`: Optional Open Policy Agent endpoint for RBAC decisions
 
 ## Security
 
