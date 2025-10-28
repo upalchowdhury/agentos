@@ -1,0 +1,716 @@
+openapi: 3.0.3
+info:
+  title: Agent Economy OS API
+  description: |
+    Unified API for deploying and managing agents
+    - **Model A**: Upload code, runs on our infrastructure
+    - **Model B**: Register external endpoints, proxied with governance
+  version: 0.2.0
+  contact:
+    name: Agent Economy OS
+    url: https://agentos.io
+
+servers:
+  - url: https://api.agentos.io
+    description: Production
+  - url: https://api.staging.agentos.io
+    description: Staging
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: agents
+    description: Agent deployment and management
+  - name: invocations
+    description: Agent execution
+  - name: observability
+    description: Metrics, logs, and costs
+  - name: registry
+    description: External agent registry (Model B)
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ============================================================================
+  # MODEL A - CODE UPLOAD
+  # ============================================================================
+  /v1/agents/modelA:
+    post:
+      tags: [agents]
+      summary: Create Model A agent (code upload)
+      operationId: createModelA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModelARequest'
+      responses:
+        '201':
+          description: Agent created, awaiting artifact upload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadArtifactResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/agents/{agent_id}/artifact:
+    put:
+      tags: [agents]
+      summary: Upload code artifact (zip or single file)
+      operationId: uploadArtifact
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                checksum:
+                  type: string
+                  description: SHA256 checksum
+      responses:
+        '202':
+          description: Artifact uploaded, build started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildStatusResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/agents/{agent_id}/build:
+    get:
+      tags: [agents]
+      summary: Get build status for Model A agent
+      operationId: getBuildStatus
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: Build status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildStatusResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================================
+  # MODEL B - REGISTRY
+  # ============================================================================
+  /v1/agents/modelB:
+    post:
+      tags: [registry]
+      summary: Register external agent endpoint (Model B)
+      operationId: createModelB
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModelBRequest'
+      responses:
+        '201':
+          description: Agent registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ============================================================================
+  # UNIFIED AGENT OPERATIONS
+  # ============================================================================
+  /v1/agents:
+    get:
+      tags: [agents]
+      summary: List all agents
+      operationId: listAgents
+      parameters:
+        - in: query
+          name: model_type
+          schema:
+            type: string
+            enum: [A, B]
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 50
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AgentResponse'
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+
+  /v1/agents/{agent_id}:
+    get:
+      tags: [agents]
+      summary: Get agent details
+      operationId: getAgent
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '200':
+          description: Agent details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [agents]
+      summary: Update agent configuration
+      operationId: updateAgent
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                status:
+                  type: string
+                  enum: [RUNNING, STOPPED]
+                env:
+                  type: object
+                resources:
+                  type: object
+      responses:
+        '200':
+          description: Agent updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [agents]
+      summary: Delete agent
+      operationId: deleteAgent
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      responses:
+        '204':
+          description: Agent deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================================
+  # INVOCATIONS
+  # ============================================================================
+  /v1/agents/{agent_id}/invoke:
+    post:
+      tags: [invocations]
+      summary: Invoke agent (works for Model A and B)
+      operationId: invokeAgent
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvocationRequest'
+      responses:
+        '200':
+          description: Agent executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvocationResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Access denied by RBAC/OPA
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '408':
+          description: Execution timeout
+        '503':
+          description: Agent unavailable
+
+  /v1/invocations/{invocation_id}:
+    get:
+      tags: [invocations]
+      summary: Get invocation details
+      operationId: getInvocation
+      parameters:
+        - in: path
+          name: invocation_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Invocation details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvocationResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================================
+  # OBSERVABILITY
+  # ============================================================================
+  /v1/agents/{agent_id}/metrics:
+    get:
+      tags: [observability]
+      summary: Get agent performance metrics
+      operationId: getAgentMetrics
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - in: query
+          name: range
+          schema:
+            type: string
+            enum: [1h, 1d, 7d, 30d]
+            default: 1d
+      responses:
+        '200':
+          description: Agent metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentMetricsResponse'
+
+  /v1/agents/{agent_id}/logs:
+    get:
+      tags: [observability]
+      summary: Query agent logs
+      operationId: getAgentLogs
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - in: query
+          name: range
+          schema:
+            type: string
+            default: 1h
+        - in: query
+          name: level
+          schema:
+            type: string
+            enum: [error, warn, info, debug]
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: Log entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs:
+                    type: array
+                    items:
+                      type: object
+                  total:
+                    type: integer
+
+  /v1/agents/{agent_id}/costs:
+    get:
+      tags: [observability]
+      summary: Get agent cost breakdown
+      operationId: getAgentCosts
+      parameters:
+        - $ref: '#/components/parameters/AgentId'
+        - in: query
+          name: period
+          schema:
+            type: string
+            enum: [daily, monthly]
+            default: monthly
+      responses:
+        '200':
+          description: Cost breakdown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentCostResponse'
+
+  # ============================================================================
+  # HEALTH
+  # ============================================================================
+  /health:
+    get:
+      tags: [system]
+      summary: Health check
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+# ==============================================================================
+# COMPONENTS
+# ==============================================================================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    AgentId:
+      in: path
+      name: agent_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    # Model A
+    CreateModelARequest:
+      type: object
+      required: [name, runtime]
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 100
+        runtime:
+          type: string
+          enum: [python3.11, python3.10]
+        requirements:
+          type: array
+          items:
+            type: string
+          maxItems: 50
+        env:
+          type: object
+          additionalProperties:
+            type: string
+        resources:
+          type: object
+          properties:
+            cpu:
+              type: string
+              example: "500m"
+            mem:
+              type: string
+              example: "1Gi"
+
+    UploadArtifactResponse:
+      type: object
+      required: [agent_id, upload_url, deployment_id, expires_at]
+      properties:
+        agent_id:
+          type: string
+          format: uuid
+        upload_url:
+          type: string
+          format: uri
+        deployment_id:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+
+    BuildStatusResponse:
+      type: object
+      required: [agent_id, deployment_id, status, started_at]
+      properties:
+        agent_id:
+          type: string
+        deployment_id:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, IN_PROGRESS, SUCCESS, FAILED]
+        logs:
+          type: array
+          items:
+            type: string
+        image_ref:
+          type: string
+        error:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    # Model B
+    CreateModelBRequest:
+      type: object
+      required: [name, endpoint_url, auth]
+      properties:
+        name:
+          type: string
+        endpoint_url:
+          type: string
+          format: uri
+        auth:
+          $ref: '#/components/schemas/AuthConfig'
+        rate_limit:
+          $ref: '#/components/schemas/RateLimitConfig'
+        health_check_path:
+          type: string
+          default: "/health"
+        timeout_seconds:
+          type: integer
+          default: 30
+
+    AuthConfig:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [bearer, header, none]
+        value:
+          type: string
+        header_name:
+          type: string
+
+    RateLimitConfig:
+      type: object
+      properties:
+        rps:
+          type: number
+          default: 10.0
+        burst:
+          type: integer
+          default: 20
+
+    # Unified
+    AgentResponse:
+      type: object
+      required: [agent_id, name, owner_id, model_type, status, created_at]
+      properties:
+        agent_id:
+          type: string
+        name:
+          type: string
+        owner_id:
+          type: string
+        model_type:
+          type: string
+          enum: [A, B]
+        status:
+          type: string
+        runtime:
+          type: string
+        image_ref:
+          type: string
+        endpoint_url:
+          type: string
+        health_status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        deployed_at:
+          type: string
+          format: date-time
+        invocation_count:
+          type: integer
+        cost_to_date:
+          type: number
+
+    InvocationRequest:
+      type: object
+      required: [input_data]
+      properties:
+        input_data:
+          type: object
+        timeout:
+          type: integer
+          default: 30
+        caller_agent_id:
+          type: string
+          description: For A2A invocations
+
+    InvocationResult:
+      type: object
+      required: [invocation_id, agent_id, status, execution_time_ms, cost, invoked_at]
+      properties:
+        invocation_id:
+          type: string
+        agent_id:
+          type: string
+        status:
+          type: string
+          enum: [SUCCESS, ERROR, TIMEOUT, DENIED]
+        result:
+          type: object
+        error:
+          type: string
+        execution_time_ms:
+          type: integer
+        cost:
+          type: number
+        metadata:
+          type: object
+        invoked_at:
+          type: string
+          format: date-time
+
+    AgentMetricsResponse:
+      type: object
+      properties:
+        agent_id:
+          type: string
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        total_invocations:
+          type: integer
+        successful_invocations:
+          type: integer
+        failed_invocations:
+          type: integer
+        avg_execution_time_ms:
+          type: number
+        p50_latency_ms:
+          type: number
+        p95_latency_ms:
+          type: number
+        p99_latency_ms:
+          type: number
+        total_cost_usd:
+          type: number
+        error_rate:
+          type: number
+
+    AgentCostResponse:
+      type: object
+      properties:
+        agent_id:
+          type: string
+        period:
+          type: string
+        total_cost_usd:
+          type: number
+        invocations:
+          type: integer
+        cost_per_invocation_usd:
+          type: number
+        breakdown:
+          type: object
+          properties:
+            compute:
+              type: number
+            llm_api:
+              type: number
+            storage:
+              type: number
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

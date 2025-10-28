@@ -1,0 +1,69 @@
+{
+  "roles": {
+    "agent:basic": {
+      "name": "agent:basic",
+      "description": "Basic agent with read-only access",
+      "permissions": [
+        {
+          "resource": "agent:info",
+          "action": "read"
+        }
+      ]
+    },
+    "agent:executor": {
+      "name": "agent:executor",
+      "description": "Can execute tasks and write memory",
+      "permissions": [
+        {
+          "resource": "agent:invoke",
+          "action": "execute"
+        },
+        {
+          "resource": "memory:read",
+          "action": "read"
+        },
+        {
+          "resource": "memory:write",
+          "action": "write"
+        }
+      ]
+    },
+    "agent:orchestrator": {
+      "name": "agent:orchestrator",
+      "description": "Can invoke other agents and manage workflows",
+      "permissions": [
+        {
+          "resource": "agent:invoke",
+          "action": "execute"
+        },
+        {
+          "resource": "agent:invoke",
+          "action": "orchestrate"
+        },
+        {
+          "resource": "workflow:create",
+          "action": "write"
+        }
+      ]
+    },
+    "admin": {
+      "name": "admin",
+      "description": "Full administrative access",
+      "permissions": [
+        {
+          "resource": "*",
+          "action": "*"
+        }
+      ]
+    }
+  },
+  "a2a_permissions": [
+    {
+      "caller_agent_id": "demo-agent-a",
+      "target_agent_id": "demo-agent-b",
+      "action": "invoke",
+      "revoked": false,
+      "granted_at": "2025-01-01T00:00:00Z"
+    }
+  ]
+}
