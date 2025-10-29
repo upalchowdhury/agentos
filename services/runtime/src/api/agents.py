@@ -28,7 +28,7 @@ executor = AgentExecutor()
 async def deploy_agent(request: DeploymentRequest):
     try:
         deployment_id = str(uuid.uuid4())
-        code_hash = hash(request.code)
+        code_hash = str(hash(request.code))
         resource_limits = {
             "max_memory": request.max_memory,
             "max_cpu": request.max_cpu

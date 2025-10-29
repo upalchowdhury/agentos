@@ -14,8 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application source
 COPY src/ /app/src/
 
-# Create non-root user
+# Create non-root user and artifacts directory
 RUN useradd -m -u 1000 runtime && \
+    mkdir -p /app/artifacts && \
     chown -R runtime:runtime /app
 
 USER runtime

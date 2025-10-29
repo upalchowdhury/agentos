@@ -34,7 +34,8 @@ class AgentBuilder:
     """
 
     def __init__(self) -> None:
-        self._artifacts_dir = Path(__file__).resolve().parents[3] / "services" / "runtime" / "artifacts"
+        # Create artifacts directory within the app directory (/app/artifacts)
+        self._artifacts_dir = Path("/app/artifacts")
         self._artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     async def build_image(

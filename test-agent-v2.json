@@ -1,0 +1,6 @@
+{
+  "name": "test-hello-agent",
+  "description": "Simple test agent that says hello",
+  "instructions": "You are a friendly assistant. Always greet users warmly and provide helpful responses.",
+  "model": "gpt-3.5-turbo"
+}

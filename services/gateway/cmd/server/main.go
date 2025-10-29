@@ -46,26 +46,30 @@ func main() {
 	// Setup router
 	r := mux.NewRouter()
 
-	// Middleware chain
+	// Middleware chain (applied to all routes)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.LogRequest)
-	r.Use(middleware.Authentication(getEnv("IDENTITY_SERVICE_URL", "http://localhost:3000")))
 	r.Use(middleware.Tracing)
 	r.Use(middleware.RateLimit)
 	r.Use(middleware.Recovery)
 
-	// Routes
-	r.HandleFunc("/a2a/v1/invoke", a2aAdapter.HandleInvoke).Methods("POST")
-	r.HandleFunc("/mcp/v1/call", mcpAdapter.HandleCall).Methods("POST")
-	
-	// Runtime service proxy routes
-	r.HandleFunc("/api/v1/agents/deploy", agentRouter.ProxyToDeploy).Methods("POST")
-	r.HandleFunc("/api/v1/agents/invoke", agentRouter.ProxyToInvoke).Methods("POST")
-	r.HandleFunc("/api/v1/agents/{id}/status", agentRouter.ProxyToStatus).Methods("GET")
-	r.HandleFunc("/api/v1/agents/{id}", agentRouter.ProxyToDelete).Methods("DELETE")
-	
+	// Public routes (no authentication required)
+	r.HandleFunc("/", rootHandler).Methods("GET")
 	r.HandleFunc("/health", healthHandler).Methods("GET")
 	r.HandleFunc("/metrics", promhttp.Handler().ServeHTTP).Methods("GET")
+	
+	// Protected routes (authentication required)
+	protected := r.PathPrefix("/").Subrouter()
+	protected.Use(middleware.Authentication(getEnv("IDENTITY_SERVICE_URL", "http://localhost:3000")))
+	
+	protected.HandleFunc("/a2a/v1/invoke", a2aAdapter.HandleInvoke).Methods("POST")
+	protected.HandleFunc("/mcp/v1/call", mcpAdapter.HandleCall).Methods("POST")
+	
+	// Runtime service proxy routes
+	protected.HandleFunc("/api/v1/agents/deploy", agentRouter.ProxyToDeploy).Methods("POST")
+	protected.HandleFunc("/api/v1/agents/invoke", agentRouter.ProxyToInvoke).Methods("POST")
+	protected.HandleFunc("/api/v1/agents/{id}/status", agentRouter.ProxyToStatus).Methods("GET")
+	protected.HandleFunc("/api/v1/agents/{id}", agentRouter.ProxyToDelete).Methods("DELETE")
 
 	// Server configuration
 	srv := &http.Server{
@@ -131,6 +135,25 @@ func initTracing(ctx context.Context) error {
 	otel.SetTracerProvider(tp)
 
 	return nil
+}
+
+func rootHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{
+		"service": "AgentOS Gateway",
+		"version": "0.1.0",
+		"endpoints": {
+			"health": "GET /health",
+			"metrics": "GET /metrics",
+			"a2a_invoke": "POST /a2a/v1/invoke",
+			"mcp_call": "POST /mcp/v1/call",
+			"agent_deploy": "POST /api/v1/agents/deploy",
+			"agent_invoke": "POST /api/v1/agents/invoke",
+			"agent_status": "GET /api/v1/agents/{id}/status",
+			"agent_delete": "DELETE /api/v1/agents/{id}"
+		}
+	}`)
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {

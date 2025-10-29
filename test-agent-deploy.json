@@ -1,0 +1,8 @@
+{
+  "name": "test-hello-agent",
+  "description": "Simple test agent that says hello",
+  "model": "gpt-3.5-turbo",
+  "system_prompt": "You are a friendly assistant. Always greet users warmly and provide helpful responses.",
+  "tools": [],
+  "capabilities": ["chat"]
+}

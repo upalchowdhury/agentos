@@ -1,0 +1,7 @@
+{
+  "agent_id": "test-agent-001",
+  "name": "Hello Agent",
+  "description": "Simple test agent",
+  "code": "def run(input_data): return {'message': 'Hello from AgentOS!', 'input': input_data}",
+  "requirements": []
+}
