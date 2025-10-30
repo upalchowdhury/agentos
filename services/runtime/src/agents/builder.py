@@ -11,6 +11,7 @@ from typing import Optional
 from ..database import db
 from ..models import AgentStatus
 from ..models_v2 import BuildStatus, BuildStatusResponse
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,21 @@ class AgentBuilder:
     """
 
     def __init__(self) -> None:
-        # Create artifacts directory within the app directory (/app/artifacts)
-        self._artifacts_dir = Path("/app/artifacts")
-        self._artifacts_dir.mkdir(parents=True, exist_ok=True)
+        # Create artifacts directory within the configured path; fall back to CWD if unavailable
+        configured_path = Path(settings.ARTIFACTS_DIR)
+        try:
+            configured_path.mkdir(parents=True, exist_ok=True)
+            self._artifacts_dir = configured_path
+        except OSError as exc:  # pragma: no cover - environment dependent
+            fallback = Path.cwd() / "artifacts"
+            fallback.mkdir(parents=True, exist_ok=True)
+            logger.warning(
+                "Failed to create artifacts directory %s (%s); falling back to %s",
+                configured_path,
+                exc,
+                fallback,
+            )
+            self._artifacts_dir = fallback
 
     async def build_image(
         self,

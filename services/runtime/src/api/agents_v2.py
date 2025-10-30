@@ -579,6 +579,14 @@ async def invoke_agent(
             cost,
             json.dumps(result_metadata, default=str)
         )
+
+        await _update_cost_snapshot(
+            agent_id=uuid.UUID(agent_id),
+            owner_id=agent["owner_id"],
+            occurred_at=started_at,
+            status=result.get('status', InvocationStatus.SUCCESS.value),
+            cost=cost,
+        )
         
         logger.info(f"Invoked agent {agent_id}, invocation_id {invocation_id}, status {result.get('status')}")
         
@@ -629,18 +637,25 @@ async def _execute_model_a(agent, input_data: dict, timeout: int) -> dict:
             input_data=input_data,
             timeout=timeout,
         )
+        status = execution_payload.get("status", InvocationStatus.SUCCESS.value)
+        metadata = {
+            "deployment_id": str(deployment["id"]),
+            "trace": execution_payload.get("trace"),
+            "raw_execution": execution_payload,
+        }
         return {
-            "status": InvocationStatus.SUCCESS.value,
-            "result": execution_payload,
-            "metadata": {"deployment_id": str(deployment["id"])},
-            "cost": execution_payload["cost_cents"] / 100,
-            "error": None,
+            "status": status,
+            "result": execution_payload.get("output"),
+            "metadata": metadata,
+            "cost": execution_payload.get("cost_cents", 0) / 100,
+            "error": execution_payload.get("error"),
         }
     except Exception as exc:  # pragma: no cover - surfaced in response
         return {
             "status": InvocationStatus.ERROR.value,
             "result": None,
             "error": str(exc),
+            "metadata": {"deployment_id": str(deployment["id"])},
         }
 
 
@@ -673,6 +688,96 @@ async def _execute_model_b(agent, input_data: dict, timeout: int) -> dict:
         "metadata": proxy_result.get("metadata", {}),
         "cost": proxy_result.get("cost", 0.0),
     }
+
+
+def _period_bounds(timestamp: datetime) -> tuple[datetime, datetime]:
+    """Calculate monthly cost snapshot window for a given timestamp."""
+    period_start = timestamp.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if period_start.month == 12:
+        period_end = period_start.replace(year=period_start.year + 1, month=1)
+    else:
+        period_end = period_start.replace(month=period_start.month + 1)
+    return period_start, period_end
+
+
+async def _update_cost_snapshot(
+    agent_id: uuid.UUID,
+    owner_id: str,
+    occurred_at: datetime,
+    status: str,
+    cost: float,
+) -> None:
+    """Update cost snapshot aggregates for the agent."""
+    try:
+        period_start, period_end = _period_bounds(occurred_at)
+
+        snapshot = await db.fetchrow(
+            """
+            SELECT total_invocations, successful_invocations, failed_invocations,
+                   total_cost, compute_cost, llm_api_cost, storage_cost
+            FROM cost_snapshots
+            WHERE agent_id = $1 AND period_start = $2 AND period_end = $3
+            """,
+            agent_id,
+            period_start,
+            period_end,
+        )
+
+        success = 1 if status == InvocationStatus.SUCCESS.value else 0
+        failure = 1 if status in {InvocationStatus.ERROR.value, InvocationStatus.TIMEOUT.value, InvocationStatus.DENIED.value} else 0
+
+        if snapshot:
+            await db.execute(
+                """
+                UPDATE cost_snapshots
+                SET total_invocations = $1,
+                    successful_invocations = $2,
+                    failed_invocations = $3,
+                    total_cost = $4,
+                    compute_cost = $5,
+                    llm_api_cost = $6,
+                    storage_cost = $7
+                WHERE agent_id = $8 AND period_start = $9 AND period_end = $10
+                """,
+                snapshot["total_invocations"] + 1,
+                snapshot["successful_invocations"] + success,
+                snapshot["failed_invocations"] + failure,
+                float(snapshot["total_cost"]) + cost,
+                float(snapshot["compute_cost"] or 0) + cost,
+                float(snapshot["llm_api_cost"] or 0),
+                float(snapshot["storage_cost"] or 0),
+                agent_id,
+                period_start,
+                period_end,
+            )
+        else:
+            snapshot_id = uuid.uuid4()
+            await db.execute(
+                """
+                INSERT INTO cost_snapshots (
+                    id, agent_id, owner_id,
+                    period_start, period_end,
+                    total_invocations, successful_invocations, failed_invocations,
+                    total_cost, compute_cost, llm_api_cost, storage_cost,
+                    created_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                """,
+                snapshot_id,
+                agent_id,
+                owner_id,
+                period_start,
+                period_end,
+                1,
+                success,
+                failure,
+                cost,
+                cost,
+                0.0,
+                0.0,
+                datetime.utcnow(),
+            )
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.error("Failed to update cost snapshot for agent %s: %s", agent_id, exc)
 
 
 # ============================================================================

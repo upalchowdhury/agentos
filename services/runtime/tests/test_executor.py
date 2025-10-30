@@ -21,6 +21,10 @@ result = input_data['x'] + input_data['y']
     assert result['agent_id'] == 'test-agent'
     assert result['execution_time_ms'] > 0
     assert result['cost_cents'] >= 1
+    trace = result['trace']
+    assert trace['status'] == 'SUCCESS'
+    assert len(trace['steps']) == 1
+    assert trace['steps'][0]['status'] == 'SUCCESS'
 
 
 @pytest.mark.asyncio
@@ -40,6 +44,7 @@ result = message.upper() + '!'
     assert result['status'] == 'SUCCESS'
     assert result['output'] == 'HELLO WORLD!'
     assert result['error'] is None
+    assert result['trace']['status'] == 'SUCCESS'
 
 
 @pytest.mark.asyncio
@@ -60,6 +65,9 @@ result = 'done'
     assert result['status'] == 'TIMEOUT'
     assert result['output'] is None
     assert 'timeout' in result['error'].lower()
+    trace = result['trace']
+    assert trace['status'] == 'TIMEOUT'
+    assert trace['steps'][0]['status'] == 'TIMEOUT'
 
 
 @pytest.mark.asyncio
@@ -78,6 +86,9 @@ result = 1 / 0
     assert result['status'] == 'ERROR'
     assert result['output'] is None
     assert 'division' in result['error'].lower() or 'zero' in result['error'].lower()
+    trace = result['trace']
+    assert trace['status'] == 'ERROR'
+    assert trace['steps'][0]['status'] == 'ERROR'
 
 
 @pytest.mark.asyncio
@@ -97,6 +108,7 @@ result = os.listdir('/')
     assert result['status'] == 'ERROR'
     assert result['output'] is None
     assert result['error'] is not None
+    assert result['trace']['status'] == 'ERROR'
 
 
 @pytest.mark.asyncio
@@ -115,3 +127,4 @@ result = input_data['x'] * 2
     
     assert quick_result['cost_cents'] >= 1
     assert quick_result['execution_time_ms'] >= 0
+    assert quick_result['trace']['steps'][0]['latency_ms'] >= 0

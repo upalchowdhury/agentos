@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     GATEWAY_SERVICE_URL: str = Field(default="http://gateway:8080")
     OPA_URL: Optional[str] = Field(default=None)
     
+    # Artifacts
+    ARTIFACTS_DIR: str = Field(default="/app/artifacts")
+    
     @property
     def database_url(self) -> str:
         return f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"

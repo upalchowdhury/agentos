@@ -3,6 +3,7 @@ import builtins
 import hashlib
 import logging
 import time
+import uuid
 from datetime import datetime
 from math import ceil
 from typing import Any, Dict, Iterable, Optional
@@ -57,6 +58,9 @@ class AgentExecutor:
         "type": type,
         "all": all,
         "any": any,
+        "Exception": Exception,
+        "ValueError": ValueError,
+        "RuntimeError": RuntimeError,
     }
 
     def __init__(self) -> None:
@@ -102,14 +106,17 @@ class AgentExecutor:
         input_data: dict,
         timeout: int = 30,
     ) -> dict[str, Any]:
+        started_at = datetime.utcnow()
         invocation_id = hashlib.sha256(
-            f"{agent_id}{datetime.utcnow().isoformat()}".encode("utf-8")
+            f"{agent_id}{started_at.isoformat()}".encode("utf-8")
         ).hexdigest()[:16]
+        trace_id = uuid.uuid4().hex
 
         start_time = time.perf_counter()
         status = "SUCCESS"
         output = None
         error = None
+        error_type: Optional[str] = None
 
         sandbox_globals = self._prepare_globals(input_data)
 
@@ -131,14 +138,49 @@ class AgentExecutor:
         except asyncio.TimeoutError:
             status = "TIMEOUT"
             error = f"Execution exceeded timeout of {timeout} seconds"
+            error_type = "TimeoutError"
             logger.warning("Agent %s execution timed out", agent_id)
         except Exception as exc:
             status = "ERROR"
             error = str(exc)
+            error_type = exc.__class__.__name__
             logger.error("Agent %s execution error: %s", agent_id, exc)
 
         execution_time_ms = max(1, int((time.perf_counter() - start_time) * 1000))
+        ended_at = datetime.utcnow()
         cost_cents = max(1, ceil(execution_time_ms / 1000.0))
+
+        step = {
+            "step_id": f"{invocation_id}-step-1",
+            "parent_step_id": None,
+            "name": "agent.execute",
+            "kind": "system",
+            "start_ts": started_at,
+            "end_ts": ended_at,
+            "latency_ms": execution_time_ms,
+            "status": status,
+            "model_provider": None,
+            "tokens_in": None,
+            "tokens_out": None,
+            "cost_cents": cost_cents,
+            "error_type": error_type,
+            "error_message": error,
+            "input_excerpt": self._excerpt(input_data),
+            "output_excerpt": self._excerpt(output) if output is not None else None,
+        }
+
+        trace = {
+            "trace_id": trace_id,
+            "invocation_id": invocation_id,
+            "agent_id": agent_id,
+            "start_ts": started_at,
+            "end_ts": ended_at,
+            "status": status,
+            "execution_time_ms": execution_time_ms,
+            "cost_cents": cost_cents,
+            "error_message": error,
+            "steps": [step],
+        }
 
         return {
             "invocation_id": invocation_id,
@@ -148,5 +190,19 @@ class AgentExecutor:
             "error": error,
             "execution_time_ms": execution_time_ms,
             "cost_cents": cost_cents,
-            "invoked_at": datetime.utcnow(),
+            "invoked_at": started_at,
+            "trace": trace,
         }
+
+    @staticmethod
+    def _excerpt(payload: Any, limit: int = 256) -> Optional[str]:
+        if payload is None:
+            return None
+        if isinstance(payload, str):
+            text = payload
+        else:
+            try:
+                text = repr(payload)
+            except Exception:  # pragma: no cover - defensive
+                text = str(payload)
+        return text if len(text) <= limit else f"{text[: limit - 3]}..."
