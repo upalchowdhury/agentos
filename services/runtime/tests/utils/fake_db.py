@@ -51,6 +51,146 @@ class FakeDatabase:
         return await self._execute(query, *args)
 
     async def fetch(self, query: str, *args: Any) -> List[FakeRecord]:  # pragma: no cover - not required yet
+        normalized = " ".join(query.strip().split()).upper()
+
+        if normalized.startswith("SELECT ID, NAME, METADATA, MODEL_TYPE, RUNTIME FROM AGENTS WHERE OWNER_ID = $1"):
+            owner_id = args[0]
+            results = [
+                FakeRecord({
+                    "id": agent_id,
+                    "name": agent["name"],
+                    "metadata": agent.get("metadata", {}),
+                    "model_type": agent.get("model_type"),
+                    "runtime": agent.get("runtime"),
+                })
+                for agent_id, agent in self.agents.items()
+                if agent.get("owner_id") == owner_id
+            ]
+            return results
+
+        if normalized.startswith("SELECT AGENT_ID, STATUS, EXECUTION_TIME_MS, COST_DECIMAL, METADATA FROM INVOCATIONS"):
+            threshold = args[0]
+            rows: List[FakeRecord] = []
+            for record in self.invocations.values():
+                if record["started_at"] >= threshold:
+                    rows.append(
+                        FakeRecord({
+                            "agent_id": record["agent_id"],
+                            "status": record["status"],
+                            "execution_time_ms": record.get("execution_time_ms"),
+                            "cost_decimal": record.get("cost_decimal"),
+                            "metadata": record.get("metadata"),
+                            "started_at": record["started_at"],
+                        })
+                    )
+            return rows
+
+        if normalized.startswith("SELECT I.ID, I.AGENT_ID, A.NAME AS AGENT_NAME") and "FROM INVOCATIONS I" in normalized:
+            user_id = args[0]
+            start_at = args[1]
+            end_at = args[2]
+            extras = list(args[3:-1])
+            limit = args[-1]
+
+            agent_filter = None
+            status_filter = None
+            for value in extras:
+                if isinstance(value, uuid.UUID):
+                    agent_filter = value
+                elif isinstance(value, str):
+                    status_filter = value
+
+            matching: List[FakeRecord] = []
+            for record in sorted(self.invocations.values(), key=lambda r: r["started_at"], reverse=True):
+                agent = self.agents.get(record["agent_id"])
+                if not agent or agent.get("owner_id") != user_id:
+                    continue
+                if record["started_at"] < start_at or record["started_at"] > end_at:
+                    continue
+                if agent_filter and record["agent_id"] != agent_filter:
+                    continue
+                if status_filter and record.get("status") != status_filter:
+                    continue
+
+                metadata = record.get("metadata")
+                if isinstance(metadata, dict):
+                    metadata_copy = dict(metadata)
+                else:
+                    metadata_copy = metadata
+
+                matching.append(
+                    FakeRecord({
+                        "id": record.get("id") or uuid.uuid4(),
+                        "agent_id": record["agent_id"],
+                        "agent_name": agent.get("name"),
+                        "requester_id": record.get("requester_id"),
+                        "caller_agent_id": record.get("caller_agent_id"),
+                        "status": record.get("status"),
+                        "started_at": record.get("started_at"),
+                        "ended_at": record.get("ended_at"),
+                        "execution_time_ms": record.get("execution_time_ms"),
+                        "cost_decimal": record.get("cost_decimal"),
+                        "metadata": metadata_copy,
+                    })
+                )
+                if len(matching) >= limit:
+                    break
+            return matching
+
+        if "JOIN AGENTS" in normalized and "FROM INVOCATIONS" in normalized:
+            owner_id = args[0]
+            pattern = None
+            limit = None
+            if "LIKE" in normalized and len(args) >= 3:
+                pattern = args[1].replace('%', '').lower()
+                limit = args[2]
+            elif len(args) >= 2:
+                limit = args[1]
+            else:
+                limit = 200
+            rows: List[FakeRecord] = []
+            for record in sorted(self.invocations.values(), key=lambda r: r["started_at"], reverse=True):
+                agent = self.agents.get(record["agent_id"])
+                if not agent or agent.get("owner_id") != owner_id:
+                    continue
+                if pattern and pattern not in agent.get("name", "").lower() and pattern not in str(record.get("id", "")).lower() and pattern not in str(record.get("agent_id", "")).lower():
+                    continue
+                metadata = record.get("metadata") or {}
+                if isinstance(metadata, dict):
+                    metadata_copy = dict(metadata)
+                else:
+                    metadata_copy = metadata
+                rows.append(
+                    FakeRecord({
+                        "id": record.get("id") or uuid.uuid4(),
+                        "agent_id": record["agent_id"],
+                        "status": record["status"],
+                        "started_at": record["started_at"],
+                        "execution_time_ms": record.get("execution_time_ms"),
+                        "metadata": metadata_copy,
+                        "requester_id": record.get("requester_id"),
+                        "caller_agent_id": record.get("caller_agent_id"),
+                        "name": agent.get("name"),
+                        "agent_metadata": agent.get("metadata"),
+                    })
+                )
+                if limit is not None and len(rows) >= limit:
+                    break
+            return rows
+
+        if normalized.startswith("SELECT STATUS, EXECUTION_TIME_MS FROM INVOCATIONS WHERE AGENT_ID = $1"):
+            agent_id = args[0]
+            limit = args[1]
+            records = [
+                FakeRecord({
+                    "status": record["status"],
+                    "execution_time_ms": record.get("execution_time_ms")
+                })
+                for record in sorted(self.invocations.values(), key=lambda r: r["started_at"], reverse=True)
+                if record["agent_id"] == agent_id
+            ]
+            return records[:limit]
+
         return []
 
     async def fetchrow(self, query: str, *args: Any) -> Optional[FakeRecord]:
@@ -76,6 +216,29 @@ class FakeDatabase:
                     "rate_limit_config",
                     "metadata",
                 ],
+            )
+
+        if "COUNT(I.ID)" in normalized and "FROM AGENTS" in normalized:
+            agent_id, owner_id = args
+            agent = self.agents.get(agent_id)
+            if not agent or agent.get("owner_id") != owner_id:
+                return None
+
+            invocations = [
+                record
+                for record in self.invocations.values()
+                if record["agent_id"] == agent_id
+            ]
+
+            invocation_count = len(invocations)
+            cost_to_date = sum(record["cost_decimal"] or 0.0 for record in invocations)
+
+            return FakeRecord(
+                {
+                    **agent,
+                    "invocation_count": invocation_count,
+                    "cost_to_date": cost_to_date,
+                }
             )
 
         if normalized.startswith(
@@ -150,6 +313,33 @@ class FakeDatabase:
             entries.sort(key=lambda record: record["period_end"], reverse=True)
             return entries[0]
 
+        if (
+            "SELECT I.*, A.NAME AS AGENT_NAME" in normalized
+            and "FROM INVOCATIONS I" in normalized
+            and "JOIN AGENTS A" in normalized
+            and "WHERE I.ID = $1" in normalized
+        ):
+            invocation_id, owner_id = args
+            record = self.invocations.get(invocation_id)
+            if not record:
+                return None
+            agent = self.agents.get(record["agent_id"])
+            if not agent or agent.get("owner_id") != owner_id:
+                return None
+            metadata = record.get("metadata")
+            if isinstance(metadata, dict):
+                metadata_copy = dict(metadata)
+            else:
+                metadata_copy = metadata
+            return FakeRecord(
+                {
+                    **record,
+                    "agent_name": agent.get("name"),
+                    "agent_metadata": agent.get("metadata"),
+                    "metadata": metadata_copy,
+                }
+            )
+
         raise NotImplementedError(f"Unsupported fetchrow query: {query}")
 
     @asynccontextmanager
@@ -160,24 +350,73 @@ class FakeDatabase:
         normalized = " ".join(query.strip().split()).upper()
 
         if normalized.startswith("INSERT INTO AGENTS"):
-            agent_id, name, owner_id, model_type, status, runtime, created_at, metadata_json = args
-            metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
-            self.agents[agent_id] = {
-                "id": agent_id,
-                "name": name,
-                "owner_id": owner_id,
-                "model_type": model_type,
-                "status": status,
-                "runtime": runtime,
-                "image_ref": None,
-                "endpoint_url": None,
-                "auth_config": {},
-                "rate_limit_config": {},
-                "metadata": metadata or {},
-                "created_at": created_at,
-                "deployed_at": None,
-                "updated_at": created_at,
-            }
+            if len(args) == 8:  # Model A insert
+                (
+                    agent_id,
+                    name,
+                    owner_id,
+                    model_type,
+                    status,
+                    runtime,
+                    created_at,
+                    metadata_json,
+                ) = args
+                metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
+                self.agents[agent_id] = {
+                    "id": agent_id,
+                    "name": name,
+                    "owner_id": owner_id,
+                    "model_type": model_type,
+                    "status": status,
+                    "runtime": runtime,
+                    "image_ref": None,
+                    "endpoint_url": None,
+                    "auth_config": {},
+                    "rate_limit_config": {},
+                    "metadata": metadata or {},
+                    "created_at": created_at,
+                    "deployed_at": None,
+                    "updated_at": created_at,
+                    "health_status": None,
+                    "health_checked_at": None,
+                }
+            else:  # Model B insert
+                (
+                    agent_id,
+                    name,
+                    owner_id,
+                    model_type,
+                    status,
+                    endpoint_url,
+                    auth_config_json,
+                    rate_limit_json,
+                    created_at,
+                    deployed_at,
+                    health_status,
+                    health_checked_at,
+                    metadata_json,
+                ) = args
+                auth_config = json.loads(auth_config_json) if isinstance(auth_config_json, str) else auth_config_json
+                rate_limit_config = json.loads(rate_limit_json) if isinstance(rate_limit_json, str) else rate_limit_json
+                metadata = json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json
+                self.agents[agent_id] = {
+                    "id": agent_id,
+                    "name": name,
+                    "owner_id": owner_id,
+                    "model_type": model_type,
+                    "status": status,
+                    "runtime": None,
+                    "image_ref": None,
+                    "endpoint_url": endpoint_url,
+                    "auth_config": auth_config or {},
+                    "rate_limit_config": rate_limit_config or {},
+                    "metadata": metadata or {},
+                    "created_at": created_at,
+                    "deployed_at": deployed_at,
+                    "updated_at": created_at,
+                    "health_status": health_status,
+                    "health_checked_at": health_checked_at,
+                }
             return "INSERT 0 1"
 
         if normalized.startswith("INSERT INTO AGENT_VERSIONS"):
@@ -277,6 +516,30 @@ class FakeDatabase:
             agent.update({"status": status, "updated_at": updated_at})
             return "UPDATE 1"
 
+        if normalized.startswith("UPDATE AGENTS SET HEALTH_STATUS"):
+            health_status, health_checked_at, agent_id = args
+            agent = self.agents.get(agent_id)
+            if agent:
+                agent.update({
+                    "health_status": health_status,
+                    "health_checked_at": health_checked_at,
+                    "updated_at": health_checked_at,
+                })
+                return "UPDATE 1"
+            return "UPDATE 0"
+
+        if normalized.startswith("UPDATE AGENTS SET METADATA = METADATA || $1"):
+            metadata_patch_json, updated_at, agent_id = args
+            patch = json.loads(metadata_patch_json)
+            agent = self.agents.get(agent_id)
+            if agent:
+                current = agent.get("metadata") or {}
+                current.update(patch)
+                agent["metadata"] = current
+                agent["updated_at"] = updated_at
+                return "UPDATE 1"
+            return "UPDATE 0"
+
         if normalized.startswith("INSERT INTO AGENT_DEPLOYMENTS"):
             (
                 deployment_id,
@@ -331,6 +594,7 @@ class FakeDatabase:
                 "execution_time_ms": execution_time_ms,
                 "cost_decimal": cost_decimal,
                 "metadata": json.loads(metadata_json) if isinstance(metadata_json, str) else metadata_json,
+                "id": invocation_id,
             }
             return "INSERT 0 1"
 
@@ -420,6 +684,7 @@ async def bootstrap_model_a_agent(
     name: str = "demo-agent",
     requirements: Optional[List[str]] = None,
     resources: Optional[Dict[str, str]] = None,
+    concurrency_limit: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Helper that creates a Model A agent and uploads its artifact.
@@ -433,6 +698,9 @@ async def bootstrap_model_a_agent(
         "env": {"API_KEY": "secret"},
         "resources": resources or {"cpu": "500m", "mem": "512Mi"},
     }
+
+    if concurrency_limit is not None:
+        payload["concurrency_limit"] = concurrency_limit
 
     create_response = await client.post("/v1/agents/modelA", json=payload, headers=headers)
     create_response.raise_for_status()

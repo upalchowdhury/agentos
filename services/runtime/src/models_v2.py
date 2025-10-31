@@ -5,7 +5,7 @@ Supports Model A (code upload) and Model B (registry) patterns
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator, ConfigDict
 
 
@@ -62,6 +62,13 @@ class CreateModelARequest(BaseModel):
         default_factory=lambda: {"cpu": "500m", "mem": "512Mi"},
         description="Resource limits: {cpu: '500m', mem: '1Gi'}"
     )
+    concurrency_limit: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Maximum concurrent invocations allowed for this agent"
+    )
+    alerts: Optional[AlertsConfig] = Field(default=None, description="Optional alert thresholds")
     
     @field_validator('requirements')
     @classmethod
@@ -126,6 +133,28 @@ class RateLimitConfig(BaseModel):
     burst: int = Field(default=20, gt=0, description="Burst capacity")
 
 
+class AlertsConfig(BaseModel):
+    """Alert thresholds per agent"""
+
+    error_rate: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Error rate threshold (0-1).",
+    )
+    latency_ms: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Latency threshold in milliseconds.",
+    )
+    sample_window: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="Number of invocations considered when evaluating alerts.",
+    )
+
+
 class CreateModelBRequest(BaseModel):
     """Register external agent endpoint (Model B)"""
     name: str = Field(..., min_length=3, max_length=100, description="Agent name")
@@ -134,6 +163,7 @@ class CreateModelBRequest(BaseModel):
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig, description="Rate limiting")
     health_check_path: Optional[str] = Field(default="/health", description="Health check endpoint")
     timeout_seconds: int = Field(default=30, ge=1, le=300, description="Request timeout")
+    alerts: Optional[AlertsConfig] = Field(default=None, description="Optional alert thresholds")
 
 
 # ============================================================================
@@ -148,6 +178,7 @@ class AgentResponse(BaseModel):
     owner_id: str = Field(..., description="Owner user/team ID")
     model_type: ModelType = Field(..., description="Deployment model (A or B)")
     status: AgentStatus = Field(..., description="Current status")
+    telemetry_quality: Optional[str] = Field(None, description="Telemetry fidelity badge (verified|partial)")
     
     # Model A specific
     runtime: Optional[Runtime] = Field(None, description="Runtime for Model A")
@@ -162,6 +193,58 @@ class AgentResponse(BaseModel):
     deployed_at: Optional[datetime] = Field(None, description="Deployment timestamp")
     invocation_count: int = Field(default=0, description="Total invocations")
     cost_to_date: float = Field(default=0.0, description="Accumulated cost in USD")
+
+
+class ObservabilityAgentSummary(BaseModel):
+    """Aggregated metrics for observability dashboards"""
+
+    agent_id: str
+    name: str
+    telemetry_quality: str
+    total_invocations: int
+    success_rate: float
+    error_rate: float
+    p95_latency_ms: Optional[float]
+    cost_usd: float
+    denied_invocations: int
+    policy_alerts_count: int
+    time_range_start: datetime
+    time_range_end: datetime
+
+
+class ObservabilityTraceStep(BaseModel):
+    step_id: str
+    parent_step_id: Optional[str]
+    name: str
+    kind: str
+    status: str
+    start_ts: Optional[datetime]
+    end_ts: Optional[datetime]
+    latency_ms: Optional[int]
+    error_type: Optional[str]
+    error_message: Optional[str]
+    input_excerpt: Optional[str]
+    output_excerpt: Optional[str]
+
+
+class ObservabilityTrace(BaseModel):
+    trace_id: str
+    invocation_id: str
+    agent_id: str
+    agent_name: str
+    telemetry_quality: str
+    status: str
+    start_ts: Optional[datetime]
+    end_ts: Optional[datetime]
+    execution_time_ms: Optional[int]
+    cost_usd: float
+    requester_id: Optional[str]
+    caller_agent_id: Optional[str]
+    actor: Optional[Dict[str, Any]]
+    policy: Optional[Dict[str, Any]]
+    policy_alerts: Optional[Dict[str, Any]]
+    steps: List[ObservabilityTraceStep]
+    logs: List[Dict[str, Any]]
 
 
 class InvocationRequest(BaseModel):

@@ -8,14 +8,17 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Tuple, Dict, Any
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Header
 from fastapi.responses import JSONResponse
 
 from ..agents.builder import agent_builder
+from ..agents.concurrency import concurrency_manager
 from ..agents.executor import AgentExecutor
 from ..agents.proxy import ExternalAgentProxy  # NEW: Proxy for Model B
+from ..alerts import alert_manager
+from ..agents.rate_limit import rate_limit_manager
 from ..config import settings
 from ..database import db
 from ..opa_client import OPAClient
@@ -40,6 +43,124 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
 executor = AgentExecutor()
 opa_client = OPAClient(settings.OPA_URL) if settings.OPA_URL else None
+
+
+async def _apply_policy_obligations(
+    obligations: Dict[str, Any],
+    *,
+    input_data: Optional[dict] = None,
+    output_data: Optional[Any] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> tuple[Optional[dict], Optional[Any], Optional[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Apply policy obligations (e.g., PII redaction) to invocation artifacts.
+    Returns sanitized copies of input/output/metadata plus enforcement summary.
+    """
+    if not obligations or opa_client is None:
+        return input_data, output_data, metadata, {}
+
+    enforcement = await opa_client.apply_obligations(
+        obligations,
+        input_data=input_data,
+        output_data=output_data,
+        metadata=metadata,
+    )
+
+    sanitized_input = enforcement.get("input_data", input_data)
+    sanitized_output = enforcement.get("output_data", output_data)
+    sanitized_metadata = enforcement.get("metadata", metadata)
+    enforcement_summary = enforcement.get("applied", {})
+
+    return sanitized_input, sanitized_output, sanitized_metadata, enforcement_summary
+
+
+def _load_metadata(agent_row) -> dict:
+    metadata = agent_row.get("metadata") if isinstance(agent_row, dict) else agent_row['metadata']
+    if metadata is None:
+        return {}
+    if isinstance(metadata, str):
+        try:
+            return json.loads(metadata)
+        except json.JSONDecodeError:
+            return {}
+    return metadata or {}
+
+
+def _resolve_concurrency_limit(metadata: dict) -> int:
+    limits = metadata.get("limits") or {}
+    limit = limits.get("concurrency") or metadata.get("concurrency_limit")
+    try:
+        return int(limit) if limit is not None else settings.DEFAULT_CONCURRENCY_LIMIT
+    except (ValueError, TypeError):  # pragma: no cover - defensive
+        return settings.DEFAULT_CONCURRENCY_LIMIT
+
+
+def _resolve_rate_limit(agent_row, metadata: dict) -> Tuple[float, int]:
+    config = agent_row.get("rate_limit_config") if isinstance(agent_row, dict) else agent_row['rate_limit_config']
+    if config is None:
+        config = {}
+    elif isinstance(config, str):
+        try:
+            config = json.loads(config)
+        except json.JSONDecodeError:  # pragma: no cover - defensive
+            config = {}
+
+    rate_limits = metadata.get("rate_limit") or {}
+
+    rps = rate_limits.get("rps", config.get("rps", 10.0))
+    burst = rate_limits.get("burst", config.get("burst", 20))
+
+    try:
+        rps_val = max(0.1, float(rps))
+    except (ValueError, TypeError):
+        rps_val = 10.0
+
+    try:
+        burst_val = max(1, int(burst))
+    except (ValueError, TypeError):
+        burst_val = 20
+
+    return rps_val, burst_val
+
+
+def _build_partial_trace(
+    agent_id: str,
+    started_at: datetime,
+    ended_at: datetime,
+    status: str,
+    endpoint: str,
+) -> Dict[str, Any]:
+    trace_id = uuid.uuid4().hex
+    latency_ms = int((ended_at - started_at).total_seconds() * 1000)
+
+    step = {
+        "step_id": f"{trace_id}-step",
+        "parent_step_id": None,
+        "name": "external.invoke",
+        "kind": "system",
+        "start_ts": started_at,
+        "end_ts": ended_at,
+        "latency_ms": latency_ms,
+        "status": status,
+        "model_provider": None,
+        "tokens_in": None,
+        "tokens_out": None,
+        "cost_cents": None,
+        "error_type": None,
+        "error_message": None,
+        "input_excerpt": f"external call -> {endpoint}",
+        "output_excerpt": None,
+    }
+
+    return {
+        "trace_id": trace_id,
+        "agent_id": agent_id,
+        "status": status,
+        "start_ts": started_at,
+        "end_ts": ended_at,
+        "execution_time_ms": latency_ms,
+        "steps": [step],
+    }
 
 
 # ============================================================================
@@ -90,6 +211,17 @@ async def create_model_a_agent(
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         """
         
+        concurrency_limit = request.concurrency_limit or settings.DEFAULT_CONCURRENCY_LIMIT
+
+        agent_metadata = {
+            "requirements": request.requirements,
+            "resources": request.resources or {"cpu": "500m", "mem": "512Mi"},
+            "limits": {"concurrency": concurrency_limit},
+            "telemetry_quality": "verified",
+        }
+        if request.alerts:
+            agent_metadata["alerts"] = request.alerts.model_dump(exclude_none=True)
+
         await db.execute(
             agent_query,
             agent_id,
@@ -99,10 +231,7 @@ async def create_model_a_agent(
             AgentStatus.PENDING.value,
             request.runtime.value,
             datetime.utcnow(),
-            json.dumps({
-                "requirements": request.requirements,
-                "resources": request.resources or {"cpu": "500m", "mem": "512Mi"}
-            })
+            json.dumps(agent_metadata)
         )
         
         # Create agent version record
@@ -305,37 +434,57 @@ async def create_model_b_agent(
     """
     try:
         agent_id = uuid.uuid4()
-        
-        # Insert agent record
+
+        health_path = request.health_check_path or "/health"
+        proxy = ExternalAgentProxy(
+            endpoint_url=str(request.endpoint_url),
+            auth_config=request.auth.model_dump(),
+            timeout=request.timeout_seconds,
+            rate_limit=request.rate_limit.model_dump(),
+        )
+
+        is_healthy = await proxy.health_check(health_path)
+        health_status = "healthy" if is_healthy else "unhealthy"
+
+        metadata = {
+            "health_check_path": health_path,
+            "rate_limit": request.rate_limit.model_dump(),
+            "timeout_seconds": request.timeout_seconds,
+            "telemetry_quality": "partial",
+        }
+        if request.alerts:
+            metadata["alerts"] = request.alerts.model_dump(exclude_none=True)
+
+        now = datetime.utcnow()
+
         query = """
         INSERT INTO agents (
-            id, name, owner_id, model_type, status, 
+            id, name, owner_id, model_type, status,
             endpoint_url, auth_config, rate_limit_config,
-            created_at, deployed_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            created_at, deployed_at,
+            health_status, health_checked_at, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         """
-        
-        now = datetime.utcnow()
-        
+
         await db.execute(
             query,
             agent_id,
             request.name,
             user_id,
             ModelType.B.value,
-            AgentStatus.RUNNING.value,  # External agents are immediately "running"
+            AgentStatus.RUNNING.value,
             str(request.endpoint_url),
             json.dumps(request.auth.model_dump()),
             json.dumps(request.rate_limit.model_dump()),
             now,
-            now
+            now,
+            health_status,
+            now,
+            json.dumps(metadata),
         )
-        
+
         logger.info(f"Registered Model B agent {agent_id} pointing to {request.endpoint_url}")
-        
-        # TODO: Trigger health check
-        # await ExternalAgentProxy.health_check(agent_id)
-        
+
         return AgentResponse(
             agent_id=str(agent_id),
             name=request.name,
@@ -343,7 +492,8 @@ async def create_model_b_agent(
             model_type=ModelType.B,
             status=AgentStatus.RUNNING,
             endpoint_url=str(request.endpoint_url),
-            health_status="unknown",
+            health_status=health_status,
+            telemetry_quality="partial",
             created_at=now,
             deployed_at=now,
             invocation_count=0,
@@ -380,12 +530,18 @@ async def get_agent(
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found or not authorized")
         
+        metadata = _load_metadata(agent)
+        telemetry_quality = metadata.get("telemetry_quality")
+        if not telemetry_quality:
+            telemetry_quality = "verified" if agent['model_type'] == ModelType.A.value else "partial"
+
         return AgentResponse(
             agent_id=str(agent['id']),
             name=agent['name'],
             owner_id=agent['owner_id'],
             model_type=ModelType(agent['model_type']),
             status=AgentStatus(agent['status']),
+            telemetry_quality=telemetry_quality,
             runtime=agent['runtime'],
             image_ref=agent['image_ref'],
             endpoint_url=agent['endpoint_url'],
@@ -476,10 +632,12 @@ async def invoke_agent(
         if agent['status'] != AgentStatus.RUNNING.value:
             raise HTTPException(status_code=503, detail=f"Agent status is {agent['status']}")
 
+        agent_metadata = _load_metadata(agent)
+
         invocation_id = uuid.uuid4()
         started_at = datetime.utcnow()
 
-        policy_metadata: dict = {}
+        policy_obligations: dict = {}
 
         if opa_client:
             decision = await opa_client.check_invoke_permission(
@@ -489,7 +647,7 @@ async def invoke_agent(
                 agent_data={
                     "owner_id": agent.get("owner_id"),
                     "model_type": agent['model_type'],
-                    "metadata": agent.get("metadata") or {},
+                    "metadata": agent_metadata,
                 },
                 caller_agent_id=request.caller_agent_id,
             )
@@ -516,10 +674,10 @@ async def invoke_agent(
                     InvocationStatus.DENIED.value,
                     started_at,
                     ended_at,
-                    execution_time_ms,
-                    0.0,
-                    json.dumps({"opa": decision}, default=str),
-                )
+                execution_time_ms,
+                0.0,
+                json.dumps({"opa": decision, "actor": {"requester_id": user_id, "caller_agent_id": request.caller_agent_id}}, default=str),
+            )
 
                 logger.info(
                     "Invocation denied by OPA for agent %s (decision: %s)",
@@ -532,31 +690,295 @@ async def invoke_agent(
                     agent_id=agent_id,
                     status=InvocationStatus.DENIED,
                     result=None,
-                    error=decision.get("deny_reason", "not_authorized"),
-                    execution_time_ms=execution_time_ms,
-                    cost=0.0,
-                    metadata=decision.get("obligations", {}),
-                    invoked_at=started_at,
-                )
-            policy_metadata = decision.get("obligations", {})
+                error=decision.get("deny_reason", "not_authorized"),
+                execution_time_ms=execution_time_ms,
+                cost=0.0,
+                metadata={
+                    "opa": decision,
+                    "actor": {
+                        "requester_id": user_id,
+                        "caller_agent_id": str(request.caller_agent_id) if request.caller_agent_id else None,
+                        "subject_type": "agent" if request.caller_agent_id else "user",
+                        "subject_id": str(request.caller_agent_id) if request.caller_agent_id else user_id,
+                    },
+                },
+                invoked_at=started_at,
+            )
+            policy_obligations = decision.get("obligations", {})
 
-        # Route based on model type
-        if agent['model_type'] == ModelType.A.value:
-            # Model A: Execute code on our infrastructure
-            result = await _execute_model_a(agent, request.input_data, request.timeout)
-        else:
-            # Model B: Proxy to external endpoint
-            result = await _execute_model_b(agent, request.input_data, request.timeout)
-        
+        caller_context: Dict[str, Any] = {
+            "requester_id": user_id,
+            "caller_agent_id": str(request.caller_agent_id) if request.caller_agent_id else None,
+            "subject_type": "agent" if request.caller_agent_id else "user",
+            "subject_id": str(request.caller_agent_id) if request.caller_agent_id else user_id,
+        }
+
+        concurrency_limit = _resolve_concurrency_limit(agent_metadata)
+        acquired_concurrency = await concurrency_manager.try_acquire(str(agent["id"]), concurrency_limit)
+        if not acquired_concurrency:
+            ended_at = datetime.utcnow()
+            execution_time_ms = int((ended_at - started_at).total_seconds() * 1000)
+            error_message = f"Concurrency limit reached ({concurrency_limit})"
+
+            base_metadata: Dict[str, Any] = {
+                "limits": {"concurrency": concurrency_limit},
+                "logs": [
+                    {
+                        "timestamp": ended_at.isoformat(),
+                        "level": "WARNING",
+                        "message": error_message,
+                        "trace_id": None,
+                    }
+                ],
+                "actor": caller_context,
+            }
+            if policy_obligations:
+                base_metadata["policy"] = {"obligations": policy_obligations}
+
+            sanitized_input, _, sanitized_metadata, enforcement_summary = await _apply_policy_obligations(
+                policy_obligations,
+                input_data=request.input_data,
+                metadata=base_metadata,
+            )
+            stored_input = sanitized_input if sanitized_input is not None else request.input_data
+            sanitized_metadata = sanitized_metadata or base_metadata
+            sanitized_metadata.setdefault("actor", caller_context)
+            if policy_obligations:
+                policy_section = sanitized_metadata.setdefault("policy", {})
+                policy_section.setdefault("obligations", policy_obligations)
+                if enforcement_summary:
+                    policy_section["enforcement"] = enforcement_summary
+            elif enforcement_summary:
+                sanitized_metadata.setdefault("policy", {})["enforcement"] = enforcement_summary
+
+            await db.execute(
+                """
+                INSERT INTO invocations (
+                    id, agent_id, requester_id, caller_agent_id,
+                    input_data, output_data, status,
+                    started_at, ended_at, execution_time_ms,
+                    cost_decimal, metadata
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                """,
+                invocation_id,
+                uuid.UUID(agent_id),
+                user_id,
+                uuid.UUID(request.caller_agent_id) if request.caller_agent_id else None,
+                json.dumps(stored_input, default=str),
+                json.dumps(None),
+                InvocationStatus.ERROR.value,
+                started_at,
+                ended_at,
+                execution_time_ms,
+                0.0,
+                json.dumps(sanitized_metadata, default=str),
+            )
+
+            await _update_cost_snapshot(
+                agent_id=uuid.UUID(agent_id),
+                owner_id=agent["owner_id"],
+                occurred_at=started_at,
+                status=InvocationStatus.ERROR.value,
+                cost=0.0,
+            )
+
+            logger.warning("Concurrency limit reached for agent %s", agent_id)
+
+            return InvocationResult(
+                invocation_id=str(invocation_id),
+                agent_id=agent_id,
+                status=InvocationStatus.ERROR,
+                result=None,
+                error=error_message,
+                execution_time_ms=execution_time_ms,
+                cost=0.0,
+                metadata=sanitized_metadata,
+                invoked_at=started_at,
+            )
+
+        rate_limit_rps, rate_limit_burst = _resolve_rate_limit(agent, agent_metadata)
+        policy_rate_limit = (
+            policy_obligations.get("rate_limit")
+            if isinstance(policy_obligations, dict)
+            else None
+        )
+        if isinstance(policy_rate_limit, dict):
+            policy_rps = policy_rate_limit.get("rps")
+            policy_burst = policy_rate_limit.get("burst")
+            try:
+                if policy_rps is not None:
+                    rate_limit_rps = max(0.1, float(policy_rps))
+            except (TypeError, ValueError):  # pragma: no cover - fall back to configured values
+                pass
+            try:
+                if policy_burst is not None:
+                    rate_limit_burst = max(1, int(policy_burst))
+            except (TypeError, ValueError):  # pragma: no cover - fall back to configured values
+                pass
+        if agent['model_type'] == ModelType.B.value:
+            if not await rate_limit_manager.try_acquire(str(agent["id"]), rate_limit_rps, rate_limit_burst):
+                ended_at = datetime.utcnow()
+                execution_time_ms = int((ended_at - started_at).total_seconds() * 1000)
+                error_message = f"Rate limit exceeded ({rate_limit_rps} rps, burst {rate_limit_burst})"
+
+                base_metadata: Dict[str, Any] = {
+                    "rate_limit": {"rps": rate_limit_rps, "burst": rate_limit_burst},
+                    "logs": [
+                        {
+                            "timestamp": ended_at.isoformat(),
+                            "level": "WARNING",
+                            "message": f"Rate limit exceeded ({rate_limit_rps} rps, burst {rate_limit_burst})",
+                            "trace_id": None,
+                        }
+                    ],
+                    "actor": caller_context,
+                }
+                if policy_obligations:
+                    base_metadata["policy"] = {"obligations": policy_obligations}
+
+                sanitized_input, _, sanitized_metadata, enforcement_summary = await _apply_policy_obligations(
+                    policy_obligations,
+                    input_data=request.input_data,
+                    metadata=base_metadata,
+                )
+                stored_input = sanitized_input if sanitized_input is not None else request.input_data
+                sanitized_metadata = sanitized_metadata or base_metadata
+                sanitized_metadata.setdefault("actor", caller_context)
+                if policy_obligations:
+                    policy_section = sanitized_metadata.setdefault("policy", {})
+                    policy_section.setdefault("obligations", policy_obligations)
+                    if enforcement_summary:
+                        policy_section["enforcement"] = enforcement_summary
+                elif enforcement_summary:
+                    sanitized_metadata.setdefault("policy", {})["enforcement"] = enforcement_summary
+
+                await db.execute(
+                    """
+                    INSERT INTO invocations (
+                        id, agent_id, requester_id, caller_agent_id,
+                        input_data, output_data, status,
+                        started_at, ended_at, execution_time_ms,
+                        cost_decimal, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    """,
+                    invocation_id,
+                    uuid.UUID(agent_id),
+                    user_id,
+                    uuid.UUID(request.caller_agent_id) if request.caller_agent_id else None,
+                    json.dumps(stored_input, default=str),
+                    json.dumps(None),
+                    InvocationStatus.ERROR.value,
+                    started_at,
+                    ended_at,
+                    execution_time_ms,
+                    0.0,
+                    json.dumps(sanitized_metadata, default=str),
+                )
+
+                await _update_cost_snapshot(
+                    agent_id=uuid.UUID(agent_id),
+                    owner_id=agent["owner_id"],
+                    occurred_at=started_at,
+                    status=InvocationStatus.ERROR.value,
+                    cost=0.0,
+                )
+
+                logger.warning("Rate limit exceeded for agent %s", agent_id)
+
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+        try:
+            # Route based on model type
+            if agent['model_type'] == ModelType.A.value:
+                # Model A: Execute code on our infrastructure
+                result = await _execute_model_a(agent, request.input_data, request.timeout)
+            else:
+                # Model B: Proxy to external endpoint
+                result = await _execute_model_b(agent, request.input_data, request.timeout)
+        finally:
+            await concurrency_manager.release(str(agent["id"]))
+
         ended_at = datetime.utcnow()
         execution_time_ms = int((ended_at - started_at).total_seconds() * 1000)
-        
+
         cost = float(result.get('cost', 0.0) or 0.0)
-        
+
         # Record invocation
         result_metadata = result.get('metadata', {}) or {}
-        if policy_metadata:
-            result_metadata = {**result_metadata, "opa_obligations": policy_metadata}
+        if not isinstance(result_metadata, dict):  # pragma: no cover - defensive
+            result_metadata = {}
+        result_metadata.setdefault("limits", {})["concurrency"] = concurrency_limit
+        if agent['model_type'] == ModelType.B.value:
+            result_metadata.setdefault("limits", {})["rate_limit"] = {
+                "rps": rate_limit_rps,
+                "burst": rate_limit_burst,
+            }
+            if result_metadata.get("telemetry_quality") == "verified" and agent_metadata.get("telemetry_quality") != "verified":
+                await _update_agent_metadata(agent["id"], {"telemetry_quality": "verified"})
+        if policy_obligations:
+            result_metadata = {**result_metadata, "opa_obligations": policy_obligations}
+        result_metadata.setdefault("actor", caller_context)
+
+        trace = result_metadata.get("trace")
+        if isinstance(trace, dict):
+            trace.setdefault("trace_id", uuid.uuid4().hex)
+            trace["invocation_id"] = str(invocation_id)
+            trace.setdefault("agent_id", str(agent["id"]))
+            trace.setdefault("start_ts", started_at)
+            trace.setdefault("end_ts", ended_at)
+            trace.setdefault(
+                "execution_time_ms",
+                int((trace.get("end_ts") - trace.get("start_ts")).total_seconds() * 1000)
+                if isinstance(trace.get("start_ts"), datetime) and isinstance(trace.get("end_ts"), datetime)
+                else execution_time_ms,
+            )
+            steps = trace.setdefault("steps", [])
+            for idx, step in enumerate(steps):
+                if not isinstance(step, dict):
+                    continue
+                step.setdefault("step_id", f"{trace['trace_id']}-step-{idx}")
+                step.setdefault("status", result.get('status', InvocationStatus.SUCCESS.value))
+
+        log_entry = {
+            "timestamp": ended_at.isoformat(),
+            "level": "INFO",
+            "message": f"Invocation {invocation_id} completed with status {result.get('status')}",
+            "trace_id": trace.get("trace_id") if isinstance(trace, dict) else None,
+            "actor": caller_context,
+        }
+        logs = result_metadata.get("logs")
+        if isinstance(logs, list):
+            logs.append(log_entry)
+        else:
+            result_metadata["logs"] = [log_entry]
+
+        stored_input, stored_output, sanitized_metadata, enforcement_summary = await _apply_policy_obligations(
+            policy_obligations,
+            input_data=request.input_data,
+            output_data=result.get('result'),
+            metadata=result_metadata,
+        )
+        stored_input = stored_input if stored_input is not None else request.input_data
+        stored_output = stored_output if stored_output is not None else result.get('result')
+        sanitized_metadata = sanitized_metadata or result_metadata
+        sanitized_metadata.setdefault("actor", caller_context)
+
+        policy_section: Optional[Dict[str, Any]] = sanitized_metadata.get("policy")
+        if policy_obligations:
+            policy_section = sanitized_metadata.setdefault("policy", {})
+            policy_section.setdefault("obligations", policy_obligations)
+            if enforcement_summary:
+                policy_section["enforcement"] = enforcement_summary
+        elif enforcement_summary:
+            policy_section = sanitized_metadata.setdefault("policy", {})
+            policy_section["enforcement"] = enforcement_summary
+
+        if isinstance(policy_rate_limit, dict):
+            policy_section = sanitized_metadata.setdefault("policy", {}) if policy_section is None else policy_section
+            policy_section["effective_rate_limit"] = {
+                "rps": rate_limit_rps,
+                "burst": rate_limit_burst,
+            }
 
         await db.execute("""
             INSERT INTO invocations (
@@ -570,14 +992,14 @@ async def invoke_agent(
             uuid.UUID(agent_id),
             user_id,
             uuid.UUID(request.caller_agent_id) if request.caller_agent_id else None,
-            json.dumps(request.input_data, default=str),
-            json.dumps(result.get('result'), default=str),
+            json.dumps(stored_input, default=str),
+            json.dumps(stored_output, default=str),
             result.get('status', InvocationStatus.SUCCESS.value),
             started_at,
             ended_at,
             execution_time_ms,
             cost,
-            json.dumps(result_metadata, default=str)
+            json.dumps(sanitized_metadata, default=str)
         )
 
         await _update_cost_snapshot(
@@ -587,18 +1009,24 @@ async def invoke_agent(
             status=result.get('status', InvocationStatus.SUCCESS.value),
             cost=cost,
         )
-        
+
+        await alert_manager.evaluate(
+            agent_id=str(agent["id"]),
+            agent_name=agent.get("name", agent_id),
+            telemetry_quality=result_metadata.get("telemetry_quality") or agent_metadata.get("telemetry_quality"),
+        )
+
         logger.info(f"Invoked agent {agent_id}, invocation_id {invocation_id}, status {result.get('status')}")
-        
+
         return InvocationResult(
             invocation_id=str(invocation_id),
             agent_id=agent_id,
             status=InvocationStatus(result.get('status', InvocationStatus.SUCCESS.value)),
-            result=result.get('result'),
+            result=stored_output,
             error=result.get('error'),
             execution_time_ms=execution_time_ms,
             cost=cost,
-            metadata=result_metadata,
+            metadata=sanitized_metadata,
             invoked_at=started_at
         )
         
@@ -671,8 +1099,10 @@ async def _execute_model_b(agent, input_data: dict, timeout: int) -> dict:
         rate_limit=rate_limit,
     )
 
+    started_at = datetime.utcnow()
     try:
         proxy_result = await proxy.invoke(input_data, timeout)
+        ended_at = datetime.utcnow()
     except Exception as exc:
         return {
             "status": InvocationStatus.ERROR.value,
@@ -681,11 +1111,32 @@ async def _execute_model_b(agent, input_data: dict, timeout: int) -> dict:
             "metadata": {"endpoint": agent["endpoint_url"]},
         }
 
+    trace = proxy_result.get("metadata", {}).get("trace")
+    telemetry_quality = proxy_result.get("metadata", {}).get("telemetry_quality", "partial")
+
+    if not isinstance(trace, dict):
+        trace = _build_partial_trace(
+            agent_id=str(agent["id"]),
+            started_at=started_at,
+            ended_at=datetime.utcnow(),
+            status=proxy_result.get("status", InvocationStatus.SUCCESS.value),
+            endpoint=agent["endpoint_url"],
+        )
+        telemetry_quality = "partial"
+
+    metadata = proxy_result.get("metadata", {}) or {}
+    metadata.update(
+        {
+            "trace": trace,
+            "telemetry_quality": telemetry_quality,
+        }
+    )
+
     return {
         "status": InvocationStatus.SUCCESS.value,
         "result": proxy_result.get("result"),
         "error": None,
-        "metadata": proxy_result.get("metadata", {}),
+        "metadata": metadata,
         "cost": proxy_result.get("cost", 0.0),
     }
 
@@ -778,6 +1229,23 @@ async def _update_cost_snapshot(
             )
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.error("Failed to update cost snapshot for agent %s: %s", agent_id, exc)
+
+
+async def _update_agent_metadata(agent_id: uuid.UUID, patch: dict) -> None:
+    try:
+        await db.execute(
+            """
+            UPDATE agents
+            SET metadata = metadata || $1,
+                updated_at = $2
+            WHERE id = $3
+            """,
+            json.dumps(patch),
+            datetime.utcnow(),
+            agent_id,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to update agent metadata for %s: %s", agent_id, exc)
 
 
 # ============================================================================

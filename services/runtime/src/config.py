@@ -38,11 +38,14 @@ class Settings(BaseSettings):
     DEFAULT_MEMORY_LIMIT: str = Field(default="512m")
     DEFAULT_CPU_LIMIT: str = Field(default="0.5")
     MAX_EXECUTION_TIME: int = Field(default=30)
+    DEFAULT_CONCURRENCY_LIMIT: int = Field(default=5)
     
     # Services
     IDENTITY_SERVICE_URL: str = Field(default="http://identity:3000")
     GATEWAY_SERVICE_URL: str = Field(default="http://gateway:8080")
     OPA_URL: Optional[str] = Field(default=None)
+    SLACK_WEBHOOK_URL: Optional[str] = Field(default=None)
+    WEB_APP_URL: Optional[str] = Field(default=None)
     
     # Artifacts
     ARTIFACTS_DIR: str = Field(default="/app/artifacts")

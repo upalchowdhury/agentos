@@ -135,6 +135,38 @@ export const agentAPI = {
 
     delete: (agentId: string) =>
       api.delete(`/v1/agents/${agentId}`),
+
+    getObservabilityAgents: (range: string = '1d') =>
+      api.get('/v1/observability/agents', { params: { range } }),
+
+    getRecentInvocations: (params?: { limit?: number; query?: string }) =>
+      api.get('/v1/observability/agents/invocations', { params }),
+
+    getTraceDetails: (invocationId: string) =>
+      api.get(`/v1/observability/agents/trace/${invocationId}`),
+
+    getLogs: (params?: {
+      trace_id?: string;
+      agent_id?: string;
+      limit?: number;
+      level?: string;
+      subject_type?: string;
+      requester_id?: string;
+      caller_agent_id?: string;
+    }) =>
+      api.get('/v1/observability/logs', { params }),
+
+    exportAudit: (params?: {
+      start?: string;
+      end?: string;
+      agent_id?: string;
+      status?: string;
+      limit?: number;
+    }) =>
+      api.get('/v1/observability/audit/export', {
+        params,
+        responseType: 'blob',
+      }),
   },
 };
 

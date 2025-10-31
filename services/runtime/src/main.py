@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import agents, health
+from .api import agents, health, observability
 from .config import settings
 from .database import db
 
@@ -75,6 +75,7 @@ app.add_middleware(
 
 app.include_router(agents.router)
 app.include_router(health.router)
+app.include_router(observability.router)
 
 # Include V2 API if available
 if HAS_V2_API:

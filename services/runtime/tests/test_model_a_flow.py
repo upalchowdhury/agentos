@@ -52,6 +52,7 @@ async def test_model_a_create_and_artifact_upload(monkeypatch, tmp_path):
     assert agent_entry["status"] == AgentStatus.RUNNING.value
     assert agent_entry["image_ref"].endswith(f"{agent_id}-{version_id}")
     assert agent_entry["deployed_at"] is not None
+    assert agent_entry["metadata"].get("telemetry_quality") == "verified"
 
     version_entry = fake_db.agent_versions[version_uuid]
     assert version_entry["build_status"] == BuildStatus.SUCCESS.value

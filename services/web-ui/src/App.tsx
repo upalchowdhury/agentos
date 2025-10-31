@@ -11,6 +11,7 @@ import { Invocations } from './pages/Invocations';
 import { Logs } from './pages/Logs';
 import { Metrics } from './pages/Metrics';
 import { Settings } from './pages/Settings';
+import { TraceViewer } from './pages/TraceViewer';
 
 const queryClient = new QueryClient();
 
@@ -30,6 +31,7 @@ function App() {
             <Route path="/registry" element={<AgentRegistry />} />
             <Route path="/register-agent" element={<RegisterAgent />} />
             <Route path="/deploy" element={<DeployAgent />} />
+            <Route path="/trace/:invocationId" element={<TraceViewer />} />
           </Routes>
         </Layout>
       </BrowserRouter>

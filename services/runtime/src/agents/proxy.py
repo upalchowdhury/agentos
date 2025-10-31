@@ -58,14 +58,11 @@ class ExternalAgentProxy:
         
         timeout = timeout or self.timeout
         
+        headers = self._build_auth_headers()
+        headers['Content-Type'] = 'application/json'
+        logger.info(f"Proxying request to {self.endpoint_url}")
+
         try:
-            # Build headers with auth
-            headers = self._build_auth_headers()
-            headers['Content-Type'] = 'application/json'
-            
-            # Make request to external endpoint
-            logger.info(f"Proxying request to {self.endpoint_url}")
-            
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
                     self.endpoint_url,
@@ -73,36 +70,46 @@ class ExternalAgentProxy:
                     headers=headers,
                     timeout=timeout
                 )
-            
+
             if response.status_code != 200:
                 logger.error(f"External agent returned {response.status_code}: {response.text}")
                 raise Exception(f"External agent error: {response.status_code}")
-            
+
             result_data = response.json()
-            
+
+            telemetry_payload = result_data.get("telemetry")
+            trace = None
+            telemetry_quality = "partial"
+
+            if isinstance(telemetry_payload, dict):
+                trace_candidate = telemetry_payload.get("trace")
+                if isinstance(trace_candidate, dict):
+                    trace = trace_candidate
+                    telemetry_quality = "verified"
+
             # Extract cost info if available (provider-specific)
             cost = self._extract_cost(result_data, headers)
-            
+
             return {
                 'result': result_data,
                 'metadata': {
                     'endpoint': self.endpoint_url,
                     'provider': self._detect_provider(),
-                    'response_time_ms': int(response.elapsed.total_seconds() * 1000)
+                    'response_time_ms': int(response.elapsed.total_seconds() * 1000),
+                    'telemetry_quality': telemetry_quality,
+                    'trace': trace,
+                    'status_code': response.status_code,
+                    'raw_headers': dict(response.headers)
                 },
                 'cost': cost
             }
-            
         except httpx.TimeoutException:
             logger.error(f"Timeout calling external agent {self.endpoint_url}")
             raise Exception("External agent timeout")
-        
         except httpx.ConnectError:
             logger.error(f"Connection failed to {self.endpoint_url}")
             raise Exception("External agent unreachable")
-        
-        except Exception as e:
-            logger.error(f"External agent invocation failed: {e}")
+        except Exception:
             raise
     
     async def health_check(self, health_path: str = "/health") -> bool:
