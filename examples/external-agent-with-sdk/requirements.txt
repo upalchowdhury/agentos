@@ -1,0 +1,8 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+httpx==0.25.2
+
+# AgentOS SDK (install from local or PyPI)
+# Local: pip install -e ../../libraries/sdk-python
+# PyPI: agentos-sdk>=0.1.0

@@ -25,6 +25,11 @@ _SENSITIVE_CONTENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("credential_leak", re.compile(r"(?i)aws[_-]?secret|api[_-]?key|password")),
 )
 
+_URL_PATTERN = re.compile(
+    r'https?://(?:[a-zA-Z0-9-]+\.)*([a-zA-Z0-9-]+\.[a-zA-Z]{2,})',
+    re.IGNORECASE
+)
+
 
 def _dict_path(parent: str, key: Any) -> str:
     key_str = str(key)
@@ -199,6 +204,55 @@ def enforce_obligations(
 
     if obligations.get("audit_log"):
         applied["audit_log"] = True
+
+    # Domain allowlist enforcement
+    domain_allowlist = obligations.get("domain_allowlist")
+    if domain_allowlist and isinstance(domain_allowlist, list):
+        logger.info(f"Applying domain allowlist: {domain_allowlist}")
+        blocked_domains: List[Dict[str, Any]] = []
+        
+        def _check_domains(value: Any, path: str, source: str) -> Any:
+            if isinstance(value, str):
+                matches = _URL_PATTERN.findall(value)
+                for domain in matches:
+                    normalized_domain = domain.lower()
+                    if not any(
+                        normalized_domain == allowed.lower() or 
+                        normalized_domain.endswith(f".{allowed.lower()}")
+                        for allowed in domain_allowlist
+                    ):
+                        blocked_domains.append({
+                            "domain": normalized_domain,
+                            "path": path,
+                            "source": source,
+                        })
+            elif isinstance(value, dict):
+                return {k: _check_domains(v, f"{path}.{k}", source) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [_check_domains(item, f"{path}[{idx}]", source) for idx, item in enumerate(value)]
+            return value
+        
+        if sanitized_input is not None:
+            _check_domains(sanitized_input, "$", "input")
+        if sanitized_output is not None:
+            _check_domains(sanitized_output, "$", "output")
+        if sanitized_metadata is not None:
+            _check_domains(sanitized_metadata, "$", "metadata")
+        
+        applied["domain_allowlist"] = {
+            "allowed": domain_allowlist,
+            "blocked_count": len(blocked_domains),
+            "blocked": blocked_domains,
+        }
+        
+        if blocked_domains:
+            if sanitized_metadata is None or not isinstance(sanitized_metadata, dict):
+                sanitized_metadata = {}
+            policy_alerts = sanitized_metadata.setdefault("policy_alerts", {})
+            policy_alerts["domain_allowlist"] = {
+                "blocked": blocked_domains,
+                "message": f"Blocked {len(blocked_domains)} external domain(s) not in allowlist"
+            }
 
     return {
         "input_data": sanitized_input,

@@ -20,6 +20,15 @@ except ImportError as exc:
     HAS_V2_API = False
     logger.warning("V2 API not available: %s", exc)
 
+# Import telemetry ingest
+try:
+    from .api import telemetry_ingest
+
+    HAS_TELEMETRY_INGEST = True
+except ImportError as exc:
+    HAS_TELEMETRY_INGEST = False
+    logger.debug("Telemetry ingest not available: %s", exc)
+
 # Import OpenTelemetry (optional)
 try:
     from .telemetry import TelemetryConfig, setup_telemetry
@@ -81,6 +90,11 @@ app.include_router(observability.router)
 if HAS_V2_API:
     app.include_router(agents_v2.router)
     logger.info("V2 API routes registered")
+
+# Include telemetry ingest if available
+if HAS_TELEMETRY_INGEST:
+    app.include_router(telemetry_ingest.router)
+    logger.info("Telemetry ingest routes registered")
 
 
 @app.get("/")
