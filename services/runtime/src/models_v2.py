@@ -48,6 +48,28 @@ class AuthScheme(str, Enum):
     NONE = "none"
 
 
+class AlertsConfig(BaseModel):
+    """Alert thresholds per agent"""
+
+    error_rate: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Error rate threshold (0-1).",
+    )
+    latency_ms: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Latency threshold in milliseconds.",
+    )
+    sample_window: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=200,
+        description="Number of invocations considered when evaluating alerts.",
+    )
+
+
 # ============================================================================
 # MODEL A - CODE UPLOAD
 # ============================================================================
