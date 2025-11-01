@@ -222,6 +222,8 @@ class ObservabilityAgentSummary(BaseModel):
 
     agent_id: str
     name: str
+    model_type: str = Field(..., description="Model type (A or B)")
+    status: str = Field(..., description="Agent status")
     telemetry_quality: str
     total_invocations: int
     success_rate: float

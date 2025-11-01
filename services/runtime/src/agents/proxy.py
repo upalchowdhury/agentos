@@ -58,9 +58,10 @@ class ExternalAgentProxy:
         
         timeout = timeout or self.timeout
         
+        logger.info(f"[PROXY START] Invoking {self.endpoint_url} with input_data type: {type(input_data)}, value: {str(input_data)[:200]}")
+        
         headers = self._build_auth_headers()
         headers['Content-Type'] = 'application/json'
-        logger.info(f"Proxying request to {self.endpoint_url}")
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -70,12 +71,19 @@ class ExternalAgentProxy:
                     headers=headers,
                     timeout=timeout
                 )
+            
+            logger.info(f"Wrapper response status: {response.status_code}, body: {response.text[:500]}")
 
             if response.status_code != 200:
                 logger.error(f"External agent returned {response.status_code}: {response.text}")
                 raise Exception(f"External agent error: {response.status_code}")
 
-            result_data = response.json()
+            try:
+                result_data = response.json()
+                logger.info(f"Wrapper returned JSON: {type(result_data)} = {str(result_data)[:200]}")
+            except Exception as e:
+                logger.error(f"Failed to parse wrapper response as JSON: {e}, response text: {response.text[:500]}")
+                raise Exception(f"Invalid JSON response from agent: {str(e)}")
 
             # Extract the actual result from the wrapper's response
             # Wrapper may return {"result": "...", "metadata": {...}, "telemetry": {...}}

@@ -175,10 +175,27 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> str:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authentication required")
     
-    # TODO: Validate JWT with identity service
-    # For now, return a stub user ID
     token = authorization.replace("Bearer ", "")
-    return f"user_{token[:8]}"  # Stub: use first 8 chars as user ID
+    
+    # Decode JWT without verification (development mode)
+    # In production: verify signature with identity service
+    try:
+        import base64
+        # JWT format: header.payload.signature
+        parts = token.split('.')
+        if len(parts) >= 2:
+            # Decode the payload (add padding if needed)
+            payload = parts[1]
+            payload += '=' * (4 - len(payload) % 4)  # Add padding
+            decoded = base64.urlsafe_b64decode(payload)
+            claims = json.loads(decoded)
+            # Extract subject (user DID) from claims
+            return claims.get('sub', f"user_{token[:8]}")
+        else:
+            return f"user_{token[:8]}"
+    except Exception as e:
+        logger.warning(f"Failed to decode JWT: {e}, using token prefix")
+        return f"user_{token[:8]}"
 
 
 # ============================================================================
@@ -901,6 +918,7 @@ async def invoke_agent(
         ended_at = datetime.utcnow()
         execution_time_ms = int((ended_at - started_at).total_seconds() * 1000)
 
+        logger.info(f"result type: {type(result)}, result: {str(result)[:500]}")
         cost = float(result.get('cost', 0.0) or 0.0)
 
         # Record invocation
@@ -960,6 +978,11 @@ async def invoke_agent(
         )
         stored_input = stored_input if stored_input is not None else request.input_data
         stored_output = stored_output if stored_output is not None else result.get('result')
+        
+        # Wrap string results in a dict to match InvocationResult schema
+        if isinstance(stored_output, str):
+            stored_output = {"output": stored_output}
+        
         sanitized_metadata = sanitized_metadata or result_metadata
         sanitized_metadata.setdefault("actor", caller_context)
 
@@ -1089,8 +1112,16 @@ async def _execute_model_a(agent, input_data: dict, timeout: int) -> dict:
 
 async def _execute_model_b(agent, input_data: dict, timeout: int) -> dict:
     """Execute Model B agent (proxy to external endpoint)"""
-    auth_config = agent["auth_config"] or {}
-    rate_limit = agent["rate_limit_config"] or {}
+    # Parse JSON fields if they're strings
+    auth_config = agent["auth_config"]
+    if isinstance(auth_config, str):
+        auth_config = json.loads(auth_config) if auth_config else {}
+    auth_config = auth_config or {}
+    
+    rate_limit = agent["rate_limit_config"]
+    if isinstance(rate_limit, str):
+        rate_limit = json.loads(rate_limit) if rate_limit else {}
+    rate_limit = rate_limit or {}
 
     proxy = ExternalAgentProxy(
         agent["endpoint_url"],
