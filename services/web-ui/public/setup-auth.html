@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentOS - Setup Auth Token</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        code {
+            background: #f8f9fa;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 AgentOS Authentication Setup</h1>
+        <p>The AgentOS UI requires an authentication token to access the API.</p>
+        
+        <div class="info">
+            <strong>For Development:</strong><br>
+            Click the button below to set a test token in your browser's localStorage.
+        </div>
+
+        <button onclick="setTestToken()">Set Development Token</button>
+        <button onclick="window.location.href='/'">Go to Dashboard</button>
+
+        <div id="result"></div>
+
+        <hr style="margin: 30px 0;">
+
+        <h3>Manual Token Creation (Production)</h3>
+        <p>For production use, create a proper DID and credential:</p>
+        <ol>
+            <li>Create a DID:
+                <pre><code>curl -X POST http://localhost:3000/api/v1/dids \
+  -H "Content-Type: application/json" \
+  -d '{"agentType": "admin", "metadata": {"name": "Your Name"}}'</code></pre>
+            </li>
+            <li>Issue a credential (use the DID from step 1):
+                <pre><code>curl -X POST http://localhost:3000/api/v1/credentials/issue \
+  -H "Content-Type: application/json" \
+  -d '{"subjectDID": "YOUR_DID_HERE", "claims": {"role": "admin"}, "expiresIn": "90d"}'</code></pre>
+            </li>
+            <li>Copy the returned token and paste it in browser console:
+                <pre><code>localStorage.setItem('agentos_token', 'YOUR_TOKEN_HERE');</code></pre>
+            </li>
+        </ol>
+    </div>
+
+    <script>
+        function setTestToken() {
+            // Set a development token
+            const testToken = 'test-token';
+            localStorage.setItem('agentos_token', testToken);
+            
+            document.getElementById('result').innerHTML = `
+                <div class="success">
+                    ✓ Token set successfully!<br><br>
+                    <strong>Token:</strong> <code>${testToken}</code><br><br>
+                    Click "Go to Dashboard" or refresh the page to access the UI.
+                </div>
+            `;
+        }
+
+        // Check if token already exists
+        window.addEventListener('load', () => {
+            const existingToken = localStorage.getItem('agentos_token');
+            if (existingToken) {
+                document.getElementById('result').innerHTML = `
+                    <div class="info" style="margin-top: 20px;">
+                        <strong>Token already set:</strong> <code>${existingToken.substring(0, 20)}...</code><br><br>
+                        You can now access the dashboard.
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>

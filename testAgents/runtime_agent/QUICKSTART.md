@@ -1,206 +1,64 @@
-# Quick Start Guide - Sentiment Analyzer Agent
+AgentOS can only talk to HTTP APIs that accept JSON requests and return JSON responses. The Streamlit app on http://localhost:8501/ is just a UI, so the runtime can’t invoke it directly—you need a small HTTP wrapper that calls the same agent logic and exposes a /invoke endpoint. I’ve already dropped a working example into the repo; here’s how to use it (or adapt it to your agent).
 
-## 🚀 Deploy and Test in 3 Steps
+1. Copy your LLM keys into .env
+Make sure agentos/testAgents/.env (or your shell) has the same keys you use for the Streamlit app:
 
-### Step 1: Deploy the Agent
+OPENAI_API_KEY=sk-...
+# or GEMINI_API_KEY/GOOGLE_API_KEY if you prefer Gemini
+2. Install the sample dependencies once
+cd /Users/upalc/AgentOS
+pip install -r agentos/testAgents/requirements.txt
+This installs fastapi, uvicorn, openai, etc.
 
-```bash
-cd /Users/upalc/AgentOS/agentos/testAgents/runtime_agent
-./deploy_agent.sh
-```
+3. Start the HTTP wrapper
+The repo now includes agentos/testAgents/model_b_sample.py, a FastAPI service that returns a JSON answer + telemetry trace:
 
-Expected output:
-```json
-{
-  "deployment_id": "uuid-here",
-  "agent_id": "sentiment-analyzer-001",
-  "status": "deployed",
-  "created_at": "2025-10-29T..."
-}
-```
+uvicorn agentos.testAgents.model_b_sample:app --host 0.0.0.0 --port 9000
+You should see:
 
-### Step 2: Invoke the Agent
+INFO:     Uvicorn running on http://0.0.0.0:9000 (Press CTRL+C to quit)
+Health check (optional):
 
-```bash
-./invoke_agent.sh
-```
+curl http://localhost:9000/health
+# {"status":"healthy"}
+If you’d rather reuse the Streamlit agent logic, create a similar FastAPI file that imports create_agent() from agent.py, executes it once, and handles prompts inside /invoke; the structure is identical to model_b_sample.py.
 
-This will run 4 test cases and show results for each.
+4. Register it with AgentOS (Model B)
+With the AgentOS stack up (make dev-up):
 
-### Step 3: Monitor the Agent
-
-#### View Real-Time Logs
-```bash
-kubectl logs -n agentos deployment/runtime -f | grep AGENT_LOG
-```
-
-#### Check Agent Status
-```bash
-curl http://localhost:8000/api/v1/agents/sentiment-analyzer-001/status | jq .
-```
-
-## 📊 What Gets Logged
-
-Each agent invocation logs:
-
-### 1. Invocation Started Event
-```json
-{
-  "event_type": "invocation_started",
-  "timestamp": "2025-10-29T21:01:11.812951",
-  "data": {
-    "agent_id": "sentiment-analyzer-v1",
-    "input_length": 59
-  }
-}
-```
-
-### 2. Invocation Completed Event  
-```json
-{
-  "event_type": "invocation_completed",
-  "timestamp": "2025-10-29T21:01:11.813095",
-  "data": {
-    "agent_id": "sentiment-analyzer-v1",
-    "sentiment": "positive",
-    "processing_time_ms": 8.89,
-    "word_count": 10,
-    "status": "success"
-  }
-}
-```
-
-### 3. Response with Detailed Metrics
-```json
-{
-  "agent_id": "sentiment-analyzer-v1",
-  "sentiment": {
-    "score": 1.0,
-    "label": "positive",
-    "confidence": 1.0
-  },
-  "entities": {
-    "great": 1,
-    "amazing": 1,
-    "product": 1
-  },
-  "metrics": {
-    "processing_time_ms": 8.89,
-    "word_count": 10,
-    "character_count": 47,
-    "timestamp": "2025-10-29T21:01:11.813087"
-  },
-  "status": "success"
-}
-```
-
-## 🎯 Custom Invocations
-
-### Single Invocation
-```bash
-curl -X POST http://localhost:8000/api/v1/agents/invoke \
+curl -X POST http://localhost:8080/v1/agents/modelB \
+  -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "agent_id": "sentiment-analyzer-001",
-    "input": {
-      "text": "Your text to analyze here!"
-    }
-  }' | jq .
-```
+        "name": "mealplanner-http",
+        "endpoint_url": "http://localhost:9000/invoke",
+        "auth": {"type": "none"},
+        "rate_limit": {"rps": 5, "burst": 10},
+        "health_check_path": "/health",
+        "alerts": {"error_rate": 0.5, "latency_ms": 3000}
+      }'
+AgentOS will store the agent and return an agent_id.
 
-### Batch Testing
-Create a file `test_inputs.txt`:
-```
-This product exceeded my expectations!
-Very disappointed with the service.
-It works as described, nothing special.
-```
+5. Invoke through AgentOS
+curl -X POST http://localhost:8080/v1/agents/<agent_id>/invoke \
+  -H "Authorization: Bearer <your-token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "input_data": {
+          "prompt": "Plan a low-carb dinner"
+        },
+        "timeout": 30
+      }'
+AgentOS proxies to your local FastAPI service, logs the metadata, and returns the result.
 
-Then run:
-```bash
-while IFS= read -r line; do
-  curl -s -X POST http://localhost:8000/api/v1/agents/invoke \
-    -H "Content-Type: application/json" \
-    -d "{\"agent_id\":\"sentiment-analyzer-001\",\"input\":{\"text\":\"$line\"}}" | jq .
-  sleep 1
-done < test_inputs.txt
-```
+6. View it in the UI
+Open http://localhost:3001:
 
-## 📈 Monitoring Dashboard Data
+Dashboard shows the new agent, invocations, denied counts, and policy alerts.
+Logs & Trace Viewer display the trace emitted by the wrapper (telemetry_quality = “verified”).
+Audit export contains each invocation with actor info if you need compliance logs.
+Why you can’t point directly at Streamlit
+Streamlit’s endpoint serves HTML/WebSocket traffic, not the JSON POST AgentOS expects, so you need the thin REST wrapper. Once it’s running, you can keep both: Streamlit for human interaction, and the FastAPI wrapper for AgentOS automation.
 
-The agent provides metrics perfect for dashboards:
+Feel free to adapt model_b_sample.py to call your exact agent (import the same tools/functions and reuse them inside /invoke). As long as you return a JSON payload like the sample does, AgentOS will “see” your agent just like any other Model B integration.
 
-### Key Performance Indicators (KPIs)
-- **Invocation Count**: Total number of executions
-- **Success Rate**: Percentage of successful invocations
-- **Average Processing Time**: Mean latency in milliseconds
-- **Sentiment Distribution**: Breakdown of positive/negative/neutral results
-
-### Metrics to Track
-- `processing_time_ms` - Agent latency
-- `word_count` - Input size
-- `sentiment.score` - Sentiment score (-1 to 1)
-- `sentiment.label` - Classification result
-- `status` - success/error
-
-### Sample Prometheus Queries (if integrated)
-```promql
-# Average processing time
-avg(agent_processing_time_ms{agent_id="sentiment-analyzer-v1"})
-
-# Invocation rate
-rate(agent_invocations_total{agent_id="sentiment-analyzer-v1"}[5m])
-
-# Error rate
-rate(agent_errors_total{agent_id="sentiment-analyzer-v1"}[5m])
-```
-
-## 🔧 Troubleshooting
-
-### Problem: Deployment Fails
-
-**Check runtime is accessible:**
-```bash
-curl http://localhost:8000/health
-```
-
-**Check database tables:**
-```bash
-kubectl exec -i -n agentos postgres-xxx -- psql agentos -c "\\dt"
-```
-
-### Problem: No Logs Appearing
-
-**Check pod is running:**
-```bash
-kubectl get pods -n agentos | grep runtime
-```
-
-**View all logs:**
-```bash
-kubectl logs -n agentos deployment/runtime --tail=100
-```
-
-### Problem: Agent Returns Errors
-
-**Check the error message in the response**
-**Common issues:**
-- Missing "text" field in input
-- Empty text string
-- Malformed JSON
-
-## 🎓 Next Steps
-
-1. **Extend the Agent**: Add more sophisticated NLP
-2. **Add More Metrics**: Track custom business metrics
-3. **Integrate with Grafana**: Create visualization dashboards
-4. **Set Up Alerts**: Configure alerts on error rates or latency
-5. **Scale Testing**: Run load tests to see performance at scale
-
-## 📝 Notes
-
-- The agent uses simple keyword-based sentiment analysis
-- For production, consider using libraries like `textblob` or `vaderSentiment`
-- Logs are captured by the runtime and can be shipped to any logging system
-- All timestamps are in UTC
-- Processing time includes the entire execution cycle

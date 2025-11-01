@@ -1,4 +1,14 @@
-# Sentiment Analyzer Agent for AgentOS
+Service	URL
+Main UI	http://localhost:3001
+Dashboard	http://localhost:3001 (home)
+Agents List	http://localhost:3001/agents
+Logs Viewer	http://localhost:3001/logs
+Trace Viewer	http://localhost:3001/traces
+Gateway API	http://localhost:8080
+Runtime API	http://localhost:8082
+
+
+s# Sentiment Analyzer Agent for AgentOS
 
 A production-ready agent that demonstrates AgentOS runtime capabilities with comprehensive logging and monitoring.
 

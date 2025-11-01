@@ -5,3 +5,7 @@ requests
 duckduckgo-search
 aiohttp>=3.9.0
 google-genai
+fastapi
+uvicorn[standard]
+openai
+pydantic

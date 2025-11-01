@@ -77,6 +77,10 @@ class ExternalAgentProxy:
 
             result_data = response.json()
 
+            # Extract the actual result from the wrapper's response
+            # Wrapper may return {"result": "...", "metadata": {...}, "telemetry": {...}}
+            actual_result = result_data.get("result", result_data)
+            
             telemetry_payload = result_data.get("telemetry")
             trace = None
             telemetry_quality = "partial"
@@ -88,10 +92,10 @@ class ExternalAgentProxy:
                     telemetry_quality = "verified"
 
             # Extract cost info if available (provider-specific)
-            cost = self._extract_cost(result_data, headers)
+            cost = result_data.get("cost", self._extract_cost(result_data, headers))
 
             return {
-                'result': result_data,
+                'result': actual_result,
                 'metadata': {
                     'endpoint': self.endpoint_url,
                     'provider': self._detect_provider(),
@@ -99,7 +103,8 @@ class ExternalAgentProxy:
                     'telemetry_quality': telemetry_quality,
                     'trace': trace,
                     'status_code': response.status_code,
-                    'raw_headers': dict(response.headers)
+                    'raw_headers': dict(response.headers),
+                    'wrapper_metadata': result_data.get("metadata", {})
                 },
                 'cost': cost
             }

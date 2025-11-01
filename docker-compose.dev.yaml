@@ -101,6 +101,28 @@ services:
       redis:
         condition: service_healthy
 
+  runtime:
+    build:
+      context: ./services/runtime
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8000"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: agentos
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OPA_URL: http://policy-engine:8081
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   gateway:
     build:
       context: ./services/gateway
@@ -111,11 +133,13 @@ services:
       IDENTITY_SERVICE_URL: http://identity:3000
       POLICY_SERVICE_URL: http://policy-engine:8081
       MEMORY_SERVICE_URL: http://memory:8000
+      RUNTIME_SERVICE_URL: http://runtime:8000
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
     depends_on:
       - identity
       - memory
       - policy-engine
+      - runtime
 
   web-ui:
     build:

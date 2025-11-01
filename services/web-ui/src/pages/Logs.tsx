@@ -164,8 +164,10 @@ function HeaderCell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Cell({ children }: { children: React.ReactNode }) {
-  return <td className="p-4 text-sm text-gray-600 dark:text-gray-300">{children}</td>;
+function Cell({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  const baseClasses = "p-4 text-sm text-gray-600 dark:text-gray-300";
+  const finalClasses = className ? `${baseClasses} ${className}` : baseClasses;
+  return <td className={finalClasses}>{children}</td>;
 }
 
 function renderPolicyAlerts(alerts?: Record<string, any> | null): JSX.Element | null {

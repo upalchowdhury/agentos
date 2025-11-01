@@ -238,7 +238,7 @@ export function TraceViewer() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                    {steps.map((step) => (
+                    {steps.map((step: any) => (
                       <tr key={step.step_id} className="hover:bg-gray-50 dark:hover:bg-gray-900/50">
                         <Cell>
                           <div className="font-medium text-gray-900 dark:text-white">
@@ -279,7 +279,7 @@ export function TraceViewer() {
               </div>
             ) : (
               <ul className="p-6 space-y-4 text-sm text-gray-700 dark:text-gray-200">
-                {logs.map((log, index) => (
+                {logs.map((log: any, index: number) => (
                   <li key={index} className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="text-xs font-medium text-gray-500 dark:text-gray-400">

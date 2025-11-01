@@ -4,6 +4,7 @@ import { Layout } from './components/Layout/Layout';
 import { Dashboard } from './components/Dashboard';
 import { AgentRegistry } from './components/AgentRegistry';
 import { RegisterAgent } from './components/RegisterAgent';
+import { RegisterModelBAgent } from './components/RegisterModelBAgent';
 import { DeployAgent } from './pages/DeployAgent';
 import { Agents } from './pages/Agents';
 import { Deployments } from './pages/Deployments';
@@ -30,6 +31,7 @@ function App() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/registry" element={<AgentRegistry />} />
             <Route path="/register-agent" element={<RegisterAgent />} />
+            <Route path="/register-external" element={<RegisterModelBAgent />} />
             <Route path="/deploy" element={<DeployAgent />} />
             <Route path="/trace/:invocationId" element={<TraceViewer />} />
           </Routes>

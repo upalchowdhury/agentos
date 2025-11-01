@@ -124,6 +124,28 @@ export const agentAPI = {
       max_cpu: string;
     }) => api.post('/v1/agents/deploy', data),
 
+    registerModelB: (data: {
+      name: string;
+      endpoint_url: string;
+      auth: {
+        type: string;
+        value?: string;
+        header_name?: string;
+      };
+      rate_limit: {
+        rps: number;
+        burst: number;
+      };
+      health_check_path?: string;
+      timeout_seconds?: number;
+      alerts?: {
+        error_rate?: number;
+        latency_ms?: number;
+      };
+    }) => api.post('/v1/agents/modelB', data),
+
+    listAgents: () => api.get('/v1/agents'),
+
     invoke: (data: {
       agent_id: string;
       input_data: Record<string, any>;

@@ -279,6 +279,18 @@ func (r *Router) ProxyToDelete(w http.ResponseWriter, req *http.Request) {
 	r.proxyToRuntime(w, req, req.URL.Path)
 }
 
+func (r *Router) ProxyToRegisterModelB(w http.ResponseWriter, req *http.Request) {
+	r.proxyToRuntime(w, req, "/v1/agents/modelB")
+}
+
+func (r *Router) ProxyToListAgents(w http.ResponseWriter, req *http.Request) {
+	r.proxyToRuntime(w, req, "/v1/agents")
+}
+
+func (r *Router) ProxyToObservability(w http.ResponseWriter, req *http.Request) {
+	r.proxyToRuntime(w, req, req.URL.Path)
+}
+
 func (r *Router) proxyToRuntime(w http.ResponseWriter, req *http.Request, path string) {
 	url := r.config.RuntimeServiceURL + path
 	

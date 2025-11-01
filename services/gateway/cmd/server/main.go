@@ -70,6 +70,17 @@ func main() {
 	protected.HandleFunc("/api/v1/agents/invoke", agentRouter.ProxyToInvoke).Methods("POST")
 	protected.HandleFunc("/api/v1/agents/{id}/status", agentRouter.ProxyToStatus).Methods("GET")
 	protected.HandleFunc("/api/v1/agents/{id}", agentRouter.ProxyToDelete).Methods("DELETE")
+	
+	// Model B registration
+	protected.HandleFunc("/v1/agents/modelB", agentRouter.ProxyToRegisterModelB).Methods("POST")
+	protected.HandleFunc("/v1/agents", agentRouter.ProxyToListAgents).Methods("GET")
+	
+	// Observability routes
+	protected.HandleFunc("/v1/observability/agents", agentRouter.ProxyToObservability).Methods("GET")
+	protected.HandleFunc("/v1/observability/agents/invocations", agentRouter.ProxyToObservability).Methods("GET")
+	protected.HandleFunc("/v1/observability/agents/trace/{invocation_id}", agentRouter.ProxyToObservability).Methods("GET")
+	protected.HandleFunc("/v1/observability/logs", agentRouter.ProxyToObservability).Methods("GET")
+	protected.HandleFunc("/v1/observability/audit/export", agentRouter.ProxyToObservability).Methods("GET")
 
 	// Server configuration
 	srv := &http.Server{
@@ -151,7 +162,14 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 			"agent_deploy": "POST /api/v1/agents/deploy",
 			"agent_invoke": "POST /api/v1/agents/invoke",
 			"agent_status": "GET /api/v1/agents/{id}/status",
-			"agent_delete": "DELETE /api/v1/agents/{id}"
+			"agent_delete": "DELETE /api/v1/agents/{id}",
+			"agent_register_modelb": "POST /v1/agents/modelB",
+			"agent_list": "GET /v1/agents",
+			"observability_agents": "GET /v1/observability/agents",
+			"observability_invocations": "GET /v1/observability/agents/invocations",
+			"observability_trace": "GET /v1/observability/agents/trace/{invocation_id}",
+			"observability_logs": "GET /v1/observability/logs",
+			"audit_export": "GET /v1/observability/audit/export"
 		}
 	}`)
 }

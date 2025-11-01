@@ -28,6 +28,7 @@ const rangeOptions: { label: string; value: string }[] = [
 
 export function Dashboard() {
   const [range, setRange] = useState('1d');
+  const [isExporting, setIsExporting] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['observability-agents', range],
@@ -36,6 +37,28 @@ export function Dashboard() {
       return response.data ?? [];
     },
   });
+
+  const handleExportAudit = async () => {
+    try {
+      setIsExporting(true);
+      const response = await agentAPI.runtime.exportAudit();
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const timestamp = new Date().toISOString().split('T')[0];
+      link.setAttribute('download', `audit_export_${timestamp}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode?.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export audit logs:', error);
+      alert('Failed to export audit logs. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const summaries = data ?? [];
 
@@ -67,6 +90,13 @@ export function Dashboard() {
               </option>
             ))}
           </select>
+          <button
+            onClick={handleExportAudit}
+            disabled={isExporting}
+            className="flex min-w-[84px] items-center justify-center rounded-lg h-10 px-4 bg-green-600 text-white text-sm font-bold hover:bg-green-700 disabled:bg-gray-400 transition-colors"
+          >
+            <span className="truncate">{isExporting ? 'Exporting...' : 'Export Audit'}</span>
+          </button>
           <Link
             to="/agents"
             className="flex min-w-[84px] items-center justify-center rounded-lg h-10 px-4 bg-gray-200 dark:bg-gray-800 text-gray-900 dark:text-white text-sm font-bold hover:bg-gray-300 dark:hover:bg-gray-700 transition-colors"
