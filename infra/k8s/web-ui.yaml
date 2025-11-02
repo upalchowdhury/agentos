@@ -174,14 +174,75 @@ data:
     </div>
     </div>
     </div>
+
+    <!-- Agents Page -->
+    <div id="page-agents" style="display:none;">
+    <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+    <div>
+    <p class="text-gray-900 dark:text-white text-3xl font-black">Agents</p>
+    <p class="text-gray-500 dark:text-gray-400 text-sm mt-1">All registered agents</p>
+    </div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <div class="bg-gray-100 dark:bg-component-dark rounded-xl border border-gray-200 dark:border-border-dark p-6">
+    <div class="flex items-center justify-between mb-4">
+    <div class="bg-blue-100 dark:bg-blue-900/30 rounded-lg p-3">
+    <span class="material-symbols-outlined text-blue-600">smart_toy</span>
+    </div>
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300">Active</span>
+    </div>
+    <h3 class="text-gray-900 dark:text-white text-lg font-bold mb-2">Model B Test Agent</h3>
+    <p class="text-gray-500 dark:text-gray-400 text-sm mb-4">Test agent for demos</p>
+    <div class="space-y-2 text-sm mb-4">
+    <div class="flex justify-between">
+    <span class="text-gray-500 dark:text-gray-400">Invocations:</span>
+    <span id="agent-inv-count" class="text-gray-900 dark:text-white font-semibold">-</span>
+    </div>
+    </div>
+    <button onclick="invokeTestAgent()" class="w-full px-3 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-blue-600">Invoke Now</button>
+    </div>
+    </div>
+    </div>
+
+    <!-- Invocations Page -->
+    <div id="page-invocations" style="display:none;">
+    <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+    <div>
+    <p class="text-gray-900 dark:text-white text-3xl font-black">All Invocations</p>
+    <p class="text-gray-500 dark:text-gray-400 text-sm mt-1">Complete history</p>
+    </div>
+    <button onclick="loadAllInvocations()" class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-bold">Refresh</button>
+    </div>
+    <div class="bg-gray-100 dark:bg-component-dark rounded-xl border border-gray-200 dark:border-border-dark overflow-hidden">
+    <div class="overflow-x-auto">
+    <table class="w-full text-left">
+    <thead class="bg-gray-50 dark:bg-gray-800/50">
+    <tr>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Trace ID</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Agent</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Time</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Duration</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Status</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Cost</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Actions</th>
+    </tr>
+    </thead>
+    <tbody id="all-invocations-table" class="divide-y divide-gray-200 dark:divide-border-dark">
+    <tr><td colspan="7" class="p-8 text-center text-gray-500">Loading...</td></tr>
+    </tbody>
+    </table>
+    </div>
+    </div>
+    </div>
+
     </main>
     </div>
     </div>
 
     <script>
-    // Use internal K8s service names when in cluster, external otherwise
-    const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:30003' : 'http://observability-api:8003';
-    const TEST_AGENT_URL = 'http://localhost:9000';
+    // API endpoints - always use relative path for proxy
+    const API_BASE = '/api/v1';
+    const RUNTIME_API = '/runtime';
 
     let currentData = { traces: [], agents: [] };
 
@@ -193,11 +254,24 @@ data:
         document.querySelectorAll('[id^="page-"]').forEach(el => el.style.display = 'none');
         const pageEl = document.getElementById(`page-${page}`);
         if (pageEl) pageEl.style.display = 'block';
+        
+        // Update nav active state
+        document.querySelectorAll('aside nav a').forEach(a => {
+            a.classList.remove('bg-primary/20', 'text-primary');
+            a.classList.add('text-gray-700', 'dark:text-gray-300');
+        });
+        
+        // Load page-specific data
+        if (page === 'agents') {
+            loadAgentsPage();
+        } else if (page === 'invocations') {
+            loadAllInvocations();
+        }
     }
 
     async function fetchData() {
         try {
-            const tracesRes = await fetch(`${API_BASE}/v1/traces?limit=20`);
+            const tracesRes = await fetch(`${API_BASE}/traces?limit=20`);
             const traces = await tracesRes.json();
             currentData.traces = traces;
             
@@ -281,23 +355,94 @@ data:
 
     async function invokeTestAgent() {
         try {
-            const response = await fetch(`${TEST_AGENT_URL}/invoke`, {
+            // Call runtime API to invoke the registered test agent
+            const response = await fetch(`${RUNTIME_API}/invoke`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ input: { demo: 'Dashboard invocation', timestamp: new Date().toISOString() } })
+                body: JSON.stringify({
+                    agent_id: '550e8400-e29b-41d4-a716-446655440000',
+                    input: { 
+                        demo: 'Dashboard invocation', 
+                        timestamp: new Date().toISOString() 
+                    }
+                })
             });
             
-            const result = await response.json();
-            alert(`✅ Agent invoked!\\n\\nTrace: ${result.trace_id}\\nTime: ${result.execution_time_ms}ms\\n\\nRefreshing in 5s...`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+            }
             
-            setTimeout(() => refreshData(), 5000);
+            const result = await response.json();
+            alert(`✅ Agent invoked successfully!\\n\\nTrace ID: ${result.trace_id || result.invocation_id}\\n\\nData will appear in ~5-8 seconds`);
+            
+            setTimeout(() => refreshData(), 6000);
         } catch (error) {
-            alert(`❌ Failed: ${error.message}\\n\\nMake sure agent is on port 9000.`);
+            alert(`❌ Invocation failed: ${error.message}\\n\\nTrying direct test agent call...`);
+            
+            // Fallback: try direct agent call through proxy
+            try {
+                const directResponse = await fetch('/test-agent/invoke', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        input: { demo: 'Direct invocation', timestamp: new Date().toISOString() }
+                    })
+                });
+                
+                const directResult = await directResponse.json();
+                alert(`✅ Direct invocation succeeded!\\n\\nTrace: ${directResult.trace_id}\\nTime: ${directResult.execution_time_ms}ms`);
+                setTimeout(() => refreshData(), 6000);
+            } catch (directError) {
+                console.error('Both invocation methods failed:', directError);
+            }
         }
     }
 
     function refreshData() {
         fetchData();
+    }
+
+    function loadAgentsPage() {
+        if (currentData.traces && currentData.traces.length > 0) {
+            const count = currentData.traces.length;
+            const countEl = document.getElementById('agent-invocations-count');
+            if (countEl) countEl.textContent = count;
+        }
+    }
+
+    async function loadAllInvocations() {
+        const tbody = document.getElementById('all-invocations-table');
+        try {
+            const response = await fetch(`${API_BASE}/traces?limit=100`);
+            const traces = await response.json();
+            
+            if (!traces || traces.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="p-12 text-center text-gray-500 dark:text-gray-400">No invocations found</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = traces.map(t => `
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                    <td class="p-4"><span class="text-sm font-mono text-gray-900 dark:text-white">${t.trace_id.substring(0, 8)}...</span></td>
+                    <td class="p-4 text-sm text-gray-900 dark:text-white font-medium">${t.agent_name}</td>
+                    <td class="p-4 text-sm text-gray-500 dark:text-gray-400">${new Date(t.started_at).toLocaleString()}</td>
+                    <td class="p-4 text-sm text-gray-900 dark:text-white">${t.execution_time_ms}ms</td>
+                    <td class="p-4">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            t.status === 'SUCCESS' 
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' 
+                                : 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300'
+                        }">
+                            ${t.status}
+                        </span>
+                    </td>
+                    <td class="p-4 text-sm text-gray-900 dark:text-white">$${t.cost_usd.toFixed(3)}</td>
+                    <td class="p-4"><a href="http://localhost:31686/trace/${t.trace_id}" target="_blank" class="text-primary text-sm hover:underline">View</a></td>
+                </tr>
+            `).join('');
+        } catch (error) {
+            tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-red-500">Failed to load</td></tr>';
+        }
     }
 
     fetchData();
@@ -382,9 +527,33 @@ data:
             add_header Cache-Control "no-cache, no-store, must-revalidate";
         }
 
-        # Proxy API requests to backend services
+        # Proxy observability API
         location /api/ {
             proxy_pass http://observability-api:8003/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+
+        # Proxy runtime API
+        location /runtime/ {
+            proxy_pass http://runtime:8000/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+
+        # Proxy test agent
+        location /test-agent/ {
+            proxy_pass http://test-agent:9000/;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection 'upgrade';

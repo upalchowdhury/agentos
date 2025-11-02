@@ -1,0 +1,169 @@
+---
+# Test Agent Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-agent
+  namespace: agentos
+  labels:
+    app: test-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-agent
+  template:
+    metadata:
+      labels:
+        app: test-agent
+    spec:
+      containers:
+      - name: test-agent
+        image: python:3.11-slim
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          pip install fastapi uvicorn httpx pydantic && \
+          cd /app && \
+          uvicorn model_b_agent:app --host 0.0.0.0 --port 9000
+        ports:
+        - containerPort: 9000
+          name: http
+        env:
+        - name: ATP_INGEST_URL
+          value: "http://ingest:8001"
+        volumeMounts:
+        - name: agent-code
+          mountPath: /app
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: agent-code
+        configMap:
+          name: test-agent-code
+---
+# Test Agent Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-agent
+  namespace: agentos
+  labels:
+    app: test-agent
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9000
+    targetPort: 9000
+    name: http
+  selector:
+    app: test-agent
+---
+# Test Agent Code ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-agent-code
+  namespace: agentos
+data:
+  model_b_agent.py: |
+    """Model B Test Agent with ATP v0 Telemetry"""
+    import json
+    import time
+    import os
+    from datetime import datetime
+    from uuid import uuid4
+    from fastapi import FastAPI
+    from pydantic import BaseModel
+    import httpx
+
+    app = FastAPI(title="Model B Test Agent")
+
+    class InvokeRequest(BaseModel):
+        input: dict
+        trace_id: str = None
+
+    class InvokeResponse(BaseModel):
+        output: dict
+        trace_id: str
+        invocation_id: str
+        execution_time_ms: int
+
+    ATP_INGEST_URL = os.getenv("ATP_INGEST_URL", "http://ingest:8001")
+
+    async def send_telemetry(trace_data: dict):
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(f"{ATP_INGEST_URL}/v1/telemetry/events", json=trace_data)
+        except Exception as e:
+            print(f"Telemetry failed: {e}")
+
+    @app.get("/health")
+    async def health():
+        return {"status": "healthy", "agent": "model-b-test"}
+
+    @app.post("/invoke", response_model=InvokeResponse)
+    async def invoke(request: InvokeRequest):
+        start = time.time()
+        trace_id = request.trace_id or str(uuid4())
+        inv_id = str(uuid4())
+        
+        # Simulate work
+        time.sleep(0.2)
+        
+        end = time.time()
+        exec_ms = int((end - start) * 1000)
+        
+        output = {
+            "result": "success",
+            "message": f"Processed: {request.input}",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Send ATP telemetry (using UUID of registered agent)
+        await send_telemetry({
+            "trace": {
+                "trace_id": trace_id,
+                "invocation_id": inv_id,
+                "agent_id": "550e8400-e29b-41d4-a716-446655440000",  # UUID of model-b-test-agent
+                "protocol": "http",
+                "status": "success",
+                "start_ts": datetime.utcfromtimestamp(start).isoformat() + "Z",
+                "end_ts": datetime.utcfromtimestamp(end).isoformat() + "Z",
+                "execution_time_ms": exec_ms,
+                "cost_cents": 5
+            },
+            "steps": [{
+                "step_id": str(uuid4()),
+                "name": "process",
+                "kind": "tool",
+                "start_ts": datetime.utcfromtimestamp(start).isoformat() + "Z",
+                "end_ts": datetime.utcfromtimestamp(end).isoformat() + "Z",
+                "latency_ms": exec_ms,
+                "status": "success"
+            }]
+        })
+        
+        return InvokeResponse(
+            output=output,
+            trace_id=trace_id,
+            invocation_id=inv_id,
+            execution_time_ms=exec_ms
+        )
