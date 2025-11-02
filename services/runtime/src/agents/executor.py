@@ -29,6 +29,10 @@ class AgentExecutor:
             "time",
             "datetime",
             "decimal",
+            "json",
+            "os",
+            "typing",
+            "google",  # Allow google.generativeai
         }
     )
 
