@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentOS - Live Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; }
+        .metric-card { transition: all 0.3s; }
+        .metric-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900">AgentOS Dashboard</h1>
+                    <p class="text-sm text-gray-500 mt-1">Real-time observability & monitoring</p>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
+                        <span class="w-2 h-2 bg-green-600 rounded-full mr-2 animate-pulse"></span>
+                        Live
+                    </span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="max-w-7xl mx-auto px-6 py-8">
+        <!-- Quick Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Total Invocations</p>
+                        <p id="total-invocations" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                    </div>
+                    <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                        <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Active Agents</p>
+                        <p id="active-agents" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                    </div>
+                    <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                        <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Avg Latency</p>
+                        <p id="avg-latency" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                    </div>
+                    <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+                        <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-card bg-white rounded-lg shadow p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-600">Total Cost</p>
+                        <p id="total-cost" class="text-3xl font-bold text-gray-900 mt-2">-</p>
+                    </div>
+                    <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
+                        <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Traces -->
+        <div class="bg-white rounded-lg shadow mb-8">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Recent Traces</h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Trace ID</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Agent</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Duration</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cost</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="traces-table" class="bg-white divide-y divide-gray-200">
+                        <tr>
+                            <td colspan="6" class="px-6 py-4 text-center text-gray-500">Loading...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Quick Links -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <a href="http://localhost:31686" target="_blank" class="block p-6 bg-white rounded-lg shadow hover:shadow-lg transition-shadow">
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">🔍 Jaeger Tracing</h3>
+                <p class="text-sm text-gray-600">Distributed tracing UI with detailed trace visualization</p>
+            </a>
+
+            <a href="http://localhost:31000" target="_blank" class="block p-6 bg-white rounded-lg shadow hover:shadow-lg transition-shadow">
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">📊 Grafana Dashboards</h3>
+                <p class="text-sm text-gray-600">Metrics, logs, and custom dashboard creation</p>
+            </a>
+
+            <a href="http://localhost:30003/docs" target="_blank" class="block p-6 bg-white rounded-lg shadow hover:shadow-lg transition-shadow">
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">📡 API Explorer</h3>
+                <p class="text-sm text-gray-600">Interactive API documentation and testing</p>
+            </a>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:30003';
+
+        async function fetchMetrics() {
+            try {
+                // Fetch traces
+                const tracesRes = await fetch(`${API_BASE}/v1/traces?limit=10`);
+                const traces = await tracesRes.json();
+
+                // Update table
+                const tbody = document.getElementById('traces-table');
+                if (traces.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="px-6 py-4 text-center text-gray-500">No traces yet</td></tr>';
+                } else {
+                    tbody.innerHTML = traces.map(t => `
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-900">${t.trace_id.substring(0, 8)}...</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${t.agent_name}</td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-2 py-1 text-xs font-medium rounded-full ${t.status === 'SUCCESS' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                                    ${t.status}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${t.execution_time_ms}ms</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">$${t.cost_usd.toFixed(3)}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${new Date(t.started_at).toLocaleTimeString()}</td>
+                        </tr>
+                    `).join('');
+
+                    // Update summary stats
+                    document.getElementById('total-invocations').textContent = traces.length;
+                    const avgLatency = traces.reduce((sum, t) => sum + t.execution_time_ms, 0) / traces.length;
+                    document.getElementById('avg-latency').textContent = Math.round(avgLatency) + 'ms';
+                    const totalCost = traces.reduce((sum, t) => sum + t.cost_usd, 0);
+                    document.getElementById('total-cost').textContent = '$' + totalCost.toFixed(2);
+                    
+                    // Count unique agents
+                    const uniqueAgents = new Set(traces.map(t => t.agent_id)).size;
+                    document.getElementById('active-agents').textContent = uniqueAgents;
+                }
+            } catch (error) {
+                console.error('Failed to fetch metrics:', error);
+                document.getElementById('traces-table').innerHTML = 
+                    '<tr><td colspan="6" class="px-6 py-4 text-center text-red-500">Failed to load data</td></tr>';
+            }
+        }
+
+        // Initial fetch
+        fetchMetrics();
+
+        // Auto-refresh every 5 seconds
+        setInterval(fetchMetrics, 5000);
+    </script>
+</body>
+</html>

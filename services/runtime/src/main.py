@@ -96,6 +96,30 @@ if HAS_TELEMETRY_INGEST:
     app.include_router(telemetry_ingest.router)
     logger.info("Telemetry ingest routes registered")
 
+# Include cost API
+try:
+    from .api import cost
+    app.include_router(cost.router)
+    logger.info("Cost API routes registered")
+except ImportError as exc:
+    logger.debug("Cost API not available: %s", exc)
+
+# Include replay API
+try:
+    from .api import replay
+    app.include_router(replay.router)
+    logger.info("Replay API routes registered")
+except ImportError as exc:
+    logger.debug("Replay API not available: %s", exc)
+
+# Include catalog API
+try:
+    from .api import catalog
+    app.include_router(catalog.router)
+    logger.info("Catalog API routes registered")
+except ImportError as exc:
+    logger.debug("Catalog API not available: %s", exc)
+
 
 @app.get("/")
 async def root():

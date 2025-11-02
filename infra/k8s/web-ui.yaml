@@ -1,0 +1,414 @@
+---
+# ConfigMap for UI configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-ui-config
+  namespace: agentos
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html class="dark" lang="en">
+    <head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Agent Economy OS Dashboard</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#007BFF",
+                        "background-light": "#f6f7f8",
+                        "background-dark": "#121212",
+                        "component-dark": "#1E1E1E",
+                        "border-dark": "#2E2E2E"
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.5rem",
+                        "lg": "1rem",
+                        "xl": "1.5rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+    </head>
+    <body class="bg-background-light dark:bg-background-dark font-display">
+    <div class="flex h-screen">
+    <!-- SideNavBar -->
+    <aside class="flex flex-col w-64 bg-background-light dark:bg-component-dark text-gray-300">
+    <div class="flex items-center gap-3 p-5 border-b border-gray-200 dark:border-border-dark">
+    <div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10 bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold">A</div>
+    <div class="flex flex-col">
+    <h1 class="text-gray-900 dark:text-white text-base font-medium leading-normal">Admin User</h1>
+    <p class="text-gray-500 dark:text-gray-400 text-sm font-normal leading-normal">admin@agentos.ai</p>
+    </div>
+    </div>
+    <nav class="flex-1 px-2 py-4 space-y-2">
+    <a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/20 text-primary" href="#" onclick="showPage('dashboard'); return false;">
+    <span class="material-symbols-outlined">dashboard</span>
+    <span class="text-sm font-medium">Dashboard</span>
+    </a>
+    <a class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300" href="#" onclick="showPage('agents'); return false;">
+    <span class="material-symbols-outlined">support_agent</span>
+    <span class="text-sm font-medium">Agents</span>
+    </a>
+    <a class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300" href="#" onclick="showPage('invocations'); return false;">
+    <span class="material-symbols-outlined">double_arrow</span>
+    <span class="text-sm font-medium">Invocations</span>
+    </a>
+    <a class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300" href="http://localhost:31686" target="_blank">
+    <span class="material-symbols-outlined">timeline</span>
+    <span class="text-sm font-medium">Traces (Jaeger)</span>
+    </a>
+    <a class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300" href="http://localhost:31000" target="_blank">
+    <span class="material-symbols-outlined">monitoring</span>
+    <span class="text-sm font-medium">Grafana</span>
+    </a>
+    <a class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300" href="http://localhost:30003/docs" target="_blank">
+    <span class="material-symbols-outlined">api</span>
+    <span class="text-sm font-medium">API Docs</span>
+    </a>
+    </nav>
+    <div class="p-4 border-t border-gray-200 dark:border-border-dark">
+    <button onclick="invokeTestAgent()" class="flex w-full cursor-pointer items-center justify-center rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold hover:bg-blue-600 transition-colors">
+    <span class="truncate">Invoke Test Agent</span>
+    </button>
+    </div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="flex flex-col flex-1 overflow-y-auto">
+    <!-- TopNavBar -->
+    <header class="flex items-center justify-between border-b border-gray-200 dark:border-border-dark px-6 py-4 bg-background-light dark:bg-background-dark sticky top-0 z-10">
+    <div class="flex items-center gap-4">
+    <h2 class="text-gray-900 dark:text-white text-lg font-bold leading-tight">AgentOS Observability</h2>
+    <span id="live-indicator" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300">
+        <span class="w-2 h-2 bg-green-600 rounded-full mr-1.5 animate-pulse"></span>
+        Live
+    </span>
+    </div>
+    <div class="flex items-center gap-4">
+    <button onclick="refreshData()" class="flex cursor-pointer items-center justify-center rounded-full h-10 w-10 bg-gray-100 dark:bg-component-dark text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+    <span class="material-symbols-outlined">refresh</span>
+    </button>
+    <button onclick="toggleDarkMode()" class="flex cursor-pointer items-center justify-center rounded-full h-10 w-10 bg-gray-100 dark:bg-component-dark text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+    <span class="material-symbols-outlined">dark_mode</span>
+    </button>
+    </div>
+    </header>
+
+    <main class="flex-1 p-6">
+    <!-- Dashboard Page -->
+    <div id="page-dashboard">
+    <div class="flex flex-wrap justify-between items-center gap-3 mb-6">
+    <div>
+    <p class="text-gray-900 dark:text-white text-3xl font-black leading-tight">Dashboard</p>
+    <p class="text-gray-500 dark:text-gray-400 text-sm mt-1">Real-time agent monitoring & observability</p>
+    </div>
+    <div class="flex items-center gap-3">
+    <button onclick="window.open('http://localhost:30003/docs', '_blank')" class="flex cursor-pointer items-center justify-center rounded-lg h-10 px-4 bg-gray-200 dark:bg-component-dark text-gray-900 dark:text-white text-sm font-bold hover:bg-gray-300 dark:hover:bg-gray-700 transition-colors">
+    <span class="truncate">API Explorer</span>
+    </button>
+    </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+    <div class="flex flex-col gap-2 rounded-xl p-6 bg-gray-100 dark:bg-component-dark border border-gray-200 dark:border-border-dark">
+    <p class="text-gray-500 dark:text-gray-400 text-base font-medium">Total Invocations</p>
+    <p id="stat-total-invocations" class="text-gray-900 dark:text-white text-3xl font-bold">-</p>
+    <p class="text-green-500 text-sm font-medium">Last updated: <span id="last-update">-</span></p>
+    </div>
+    <div class="flex flex-col gap-2 rounded-xl p-6 bg-gray-100 dark:bg-component-dark border border-gray-200 dark:border-border-dark">
+    <p class="text-gray-500 dark:text-gray-400 text-base font-medium">Active Agents</p>
+    <p id="stat-active-agents" class="text-gray-900 dark:text-white text-3xl font-bold">-</p>
+    <p class="text-blue-500 text-sm font-medium">Registered & deployed</p>
+    </div>
+    <div class="flex flex-col gap-2 rounded-xl p-6 bg-gray-100 dark:bg-component-dark border border-gray-200 dark:border-border-dark">
+    <p class="text-gray-500 dark:text-gray-400 text-base font-medium">Avg Latency</p>
+    <p id="stat-avg-latency" class="text-gray-900 dark:text-white text-3xl font-bold">-</p>
+    <p class="text-purple-500 text-sm font-medium">Execution time</p>
+    </div>
+    <div class="flex flex-col gap-2 rounded-xl p-6 bg-gray-100 dark:bg-component-dark border border-gray-200 dark:border-border-dark">
+    <p class="text-gray-500 dark:text-gray-400 text-base font-medium">Total Cost</p>
+    <p id="stat-total-cost" class="text-gray-900 dark:text-white text-3xl font-bold">-</p>
+    <p class="text-orange-500 text-sm font-medium">USD spent</p>
+    </div>
+    </div>
+
+    <!-- Recent Invocations Table -->
+    <div class="bg-gray-100 dark:bg-component-dark rounded-xl border border-gray-200 dark:border-border-dark overflow-hidden">
+    <div class="flex items-center justify-between p-6 border-b border-gray-200 dark:border-border-dark">
+    <h3 class="text-gray-900 dark:text-white text-lg font-bold">Recent Invocations</h3>
+    <button onclick="refreshData()" class="text-primary hover:text-blue-600 text-sm font-medium">Refresh</button>
+    </div>
+    <div class="overflow-x-auto">
+    <table class="w-full text-left">
+    <thead class="bg-gray-50 dark:bg-gray-800/50">
+    <tr>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Trace ID</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Agent</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Time</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Duration</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Status</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400">Cost</th>
+    <th class="p-4 text-sm font-semibold text-gray-500 dark:text-gray-400"></th>
+    </tr>
+    </thead>
+    <tbody id="invocations-table" class="divide-y divide-gray-200 dark:divide-border-dark">
+    <tr>
+    <td colspan="7" class="p-8 text-center text-gray-500 dark:text-gray-400">Loading invocations...</td>
+    </tr>
+    </tbody>
+    </table>
+    </div>
+    </div>
+    </div>
+    </main>
+    </div>
+    </div>
+
+    <script>
+    // Use internal K8s service names when in cluster, external otherwise
+    const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:30003' : 'http://observability-api:8003';
+    const TEST_AGENT_URL = 'http://localhost:9000';
+
+    let currentData = { traces: [], agents: [] };
+
+    function toggleDarkMode() {
+        document.documentElement.classList.toggle('dark');
+    }
+
+    function showPage(page) {
+        document.querySelectorAll('[id^="page-"]').forEach(el => el.style.display = 'none');
+        const pageEl = document.getElementById(`page-${page}`);
+        if (pageEl) pageEl.style.display = 'block';
+    }
+
+    async function fetchData() {
+        try {
+            const tracesRes = await fetch(`${API_BASE}/v1/traces?limit=20`);
+            const traces = await tracesRes.json();
+            currentData.traces = traces;
+            
+            updateStats(traces);
+            updateInvocationsTable(traces);
+            
+            document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+            document.getElementById('live-indicator').className = 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300';
+        } catch (error) {
+            console.error('Failed to fetch data:', error);
+            document.getElementById('invocations-table').innerHTML = `
+                <tr><td colspan="7" class="p-8 text-center text-red-500">Failed to load data. Error: ${error.message}</td></tr>
+            `;
+            document.getElementById('live-indicator').className = 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300';
+        }
+    }
+
+    function updateStats(traces) {
+        if (!traces || traces.length === 0) {
+            document.getElementById('stat-total-invocations').textContent = '0';
+            document.getElementById('stat-active-agents').textContent = '0';
+            document.getElementById('stat-avg-latency').textContent = '0ms';
+            document.getElementById('stat-total-cost').textContent = '$0.00';
+            return;
+        }
+        
+        document.getElementById('stat-total-invocations').textContent = traces.length;
+        
+        const uniqueAgents = new Set(traces.map(t => t.agent_id)).size;
+        document.getElementById('stat-active-agents').textContent = uniqueAgents;
+        
+        const avgLatency = traces.reduce((sum, t) => sum + t.execution_time_ms, 0) / traces.length;
+        document.getElementById('stat-avg-latency').textContent = Math.round(avgLatency) + 'ms';
+        
+        const totalCost = traces.reduce((sum, t) => sum + t.cost_usd, 0);
+        document.getElementById('stat-total-cost').textContent = '$' + totalCost.toFixed(3);
+    }
+
+    function updateInvocationsTable(traces) {
+        const tbody = document.getElementById('invocations-table');
+        
+        if (!traces || traces.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="7" class="p-12 text-center">
+                        <div class="flex flex-col items-center justify-center text-gray-500 dark:text-gray-400">
+                            <span class="material-symbols-outlined text-6xl">upcoming</span>
+                            <p class="mt-4 text-lg font-medium">No invocations yet</p>
+                            <p class="text-sm">Invoke an agent to see traces appear here</p>
+                        </div>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        tbody.innerHTML = traces.map(t => `
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+                <td class="p-4">
+                    <span class="text-sm font-mono text-gray-900 dark:text-white">${t.trace_id.substring(0, 8)}...</span>
+                </td>
+                <td class="p-4 text-sm text-gray-900 dark:text-white font-medium">${t.agent_name}</td>
+                <td class="p-4 text-sm text-gray-500 dark:text-gray-400">${new Date(t.started_at).toLocaleTimeString()}</td>
+                <td class="p-4 text-sm text-gray-900 dark:text-white">${t.execution_time_ms}ms</td>
+                <td class="p-4">
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        t.status === 'SUCCESS' 
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' 
+                            : 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300'
+                    }">
+                        ${t.status}
+                    </span>
+                </td>
+                <td class="p-4 text-sm text-gray-900 dark:text-white">$${t.cost_usd.toFixed(3)}</td>
+                <td class="p-4 text-right">
+                    <a href="http://localhost:31686/trace/${t.trace_id}" target="_blank" class="text-primary font-medium text-sm hover:underline">View</a>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    async function invokeTestAgent() {
+        try {
+            const response = await fetch(`${TEST_AGENT_URL}/invoke`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ input: { demo: 'Dashboard invocation', timestamp: new Date().toISOString() } })
+            });
+            
+            const result = await response.json();
+            alert(`✅ Agent invoked!\\n\\nTrace: ${result.trace_id}\\nTime: ${result.execution_time_ms}ms\\n\\nRefreshing in 5s...`);
+            
+            setTimeout(() => refreshData(), 5000);
+        } catch (error) {
+            alert(`❌ Failed: ${error.message}\\n\\nMake sure agent is on port 9000.`);
+        }
+    }
+
+    function refreshData() {
+        fetchData();
+    }
+
+    fetchData();
+    setInterval(fetchData, 10000);
+    </script>
+
+    </body>
+    </html>
+---
+# Web UI Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-ui
+  namespace: agentos
+  labels:
+    app: web-ui
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web-ui
+  template:
+    metadata:
+      labels:
+        app: web-ui
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: ui-config
+          mountPath: /usr/share/nginx/html
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 3
+          periodSeconds: 5
+      volumes:
+      - name: ui-config
+        configMap:
+          name: web-ui-config
+      - name: nginx-config
+        configMap:
+          name: nginx-config
+---
+# Nginx Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: agentos
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name localhost;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ /index.html;
+            add_header Cache-Control "no-cache, no-store, must-revalidate";
+        }
+
+        # Proxy API requests to backend services
+        location /api/ {
+            proxy_pass http://observability-api:8003/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+    }
+---
+# Web UI Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-ui
+  namespace: agentos
+  labels:
+    app: web-ui
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30080
+    name: http
+  selector:
+    app: web-ui

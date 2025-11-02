@@ -1,0 +1,153 @@
+# Envoy Sidecar Configuration for AgentOS
+# US-G5: Flex/Envoy interop - sidecar mode compatible
+# This allows AgentOS to coexist with existing Flex Gateway/Envoy mesh
+
+static_resources:
+  listeners:
+  - name: agent_listener
+    address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 9080
+    filter_chains:
+    - filters:
+      # 1. External Authorization Filter (OPA integration)
+      - name: envoy.filters.http.ext_authz
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+          transport_api_version: V3
+          grpc_service:
+            envoy_grpc:
+              cluster_name: opa_service
+            timeout: 0.5s
+          failure_mode_allow: false
+          with_request_body:
+            max_request_bytes: 8192
+            allow_partial_message: true
+      
+      # 2. ATP Telemetry Filter (custom filter for ATP v0 events)
+      - name: envoy.filters.http.lua
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+          inline_code: |
+            function envoy_on_request(request_handle)
+              -- Capture request start time
+              request_handle:headers():add("x-agentos-start-time", os.time())
+              request_handle:headers():add("x-agentos-trace-id", request_handle:headers():get("x-request-id"))
+            end
+            
+            function envoy_on_response(response_handle)
+              -- Send ATP telemetry event
+              local start_time = response_handle:headers():get("x-agentos-start-time")
+              local trace_id = response_handle:headers():get("x-agentos-trace-id")
+              local status = response_handle:headers():get(":status")
+              
+              if start_time ~= nil and trace_id ~= nil then
+                local end_time = os.time()
+                local latency_ms = (end_time - tonumber(start_time)) * 1000
+                
+                local telemetry_body = string.format(
+                  '{"trace_id":"%s","status":"%s","latency_ms":%d}',
+                  trace_id, status, latency_ms
+                )
+                
+                -- Send to ATP ingest service
+                local headers, body = response_handle:httpCall(
+                  "atp_ingest_service",
+                  {
+                    [":method"] = "POST",
+                    [":path"] = "/v1/telemetry/events",
+                    [":authority"] = "atp-ingest",
+                    ["content-type"] = "application/json"
+                  },
+                  telemetry_body,
+                  5000
+                )
+              end
+            end
+      
+      # 3. Router filter
+      - name: envoy.filters.http.router
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+
+  clusters:
+  # OPA service for policy enforcement
+  - name: opa_service
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: opa_service
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: localhost
+                port_value: 9191
+    http2_protocol_options: {}
+  
+  # ATP Ingest service for telemetry
+  - name: atp_ingest_service
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    connect_timeout: 5s
+    load_assignment:
+      cluster_name: atp_ingest_service
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: localhost
+                port_value: 8001
+  
+  # Upstream agent service
+  - name: agent_service
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    connect_timeout: 30s
+    load_assignment:
+      cluster_name: agent_service
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: localhost
+                port_value: 8000
+    health_checks:
+    - timeout: 5s
+      interval: 30s
+      unhealthy_threshold: 2
+      healthy_threshold: 2
+      http_health_check:
+        path: "/health"
+        expected_statuses:
+        - start: 200
+          end: 299
+
+admin:
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901
+
+tracing:
+  http:
+    name: envoy.tracers.opentelemetry
+    typed_config:
+      "@type": type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig
+      grpc_service:
+        envoy_grpc:
+          cluster_name: otel_collector
+        timeout: 0.5s
+      service_name: agentos-sidecar
+
+layered_runtime:
+  layers:
+  - name: static_layer
+    static_layer:
+      envoy:
+        reloadable_features:
+          allow_response_for_timeout: true

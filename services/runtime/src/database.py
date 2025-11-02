@@ -14,18 +14,35 @@ class Database:
         self.pool: Optional[asyncpg.Pool] = None
         self.dsn = settings.database_url
     
-    async def connect(self) -> None:
-        try:
-            self.pool = await asyncpg.create_pool(
-                self.dsn,
-                min_size=5,
-                max_size=20,
-                command_timeout=60
-            )
-            logger.info("Database connection pool established")
-        except Exception as e:
-            logger.error(f"Failed to connect to database: {e}")
-            raise
+    async def connect(self):
+        """Connect to database"""
+        if not self.pool:
+            import os
+            try:
+                # Use environment variables if available, otherwise use DSN from settings
+                db_host = os.getenv("DATABASE_HOST")
+                if db_host:
+                    # Use individual connection parameters from environment
+                    self.pool = await asyncpg.create_pool(
+                        host=db_host,
+                        port=int(os.getenv("DATABASE_PORT", 5432)),
+                        user=os.getenv("DATABASE_USER", "postgres"),
+                        password=os.getenv("DATABASE_PASSWORD", ""),
+                        database=os.getenv("DATABASE_NAME", "agentos"),
+                        min_size=2,
+                        max_size=10,
+                    )
+                else:
+                    # Use DSN from settings
+                    self.pool = await asyncpg.create_pool(
+                        self.dsn,
+                        min_size=2,
+                        max_size=10,
+                    )
+                logger.info("Database connection pool established")
+            except Exception as e:
+                logger.error(f"Failed to connect to database: {e}")
+                raise
     
     async def disconnect(self) -> None:
         if self.pool:

@@ -1,0 +1,484 @@
+# Complete AgentOS Observability Stack for Kubernetes
+# Deploy to Docker Desktop Kubernetes
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agentos
+
+---
+# PostgreSQL StatefulSet with Persistent Storage
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: agentos
+data:
+  POSTGRES_DB: agentos
+  POSTGRES_USER: postgres
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: agentos
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: postgres
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/agentos
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: agentos
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: agentos
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16
+        ports:
+        - containerPort: 5432
+          name: postgres
+        envFrom:
+        - configMapRef:
+            name: postgres-config
+        - secretRef:
+            name: postgres-secret
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: agentos
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  clusterIP: None  # Headless service for StatefulSet
+
+---
+# Runtime Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runtime
+  namespace: agentos
+  labels:
+    app: runtime
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: runtime
+  template:
+    metadata:
+      labels:
+        app: runtime
+    spec:
+      initContainers:
+      - name: wait-for-postgres
+        image: busybox:1.36
+        command: ['sh', '-c', 'until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done']
+      containers:
+      - name: runtime
+        image: python:3.11-slim
+        workingDir: /app
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            pip install --no-cache-dir fastapi uvicorn asyncpg pydantic pydantic-settings python-dateutil httpx python-multipart
+            export PYTHONPATH=/app:$PYTHONPATH
+            cd /app/services/runtime
+            uvicorn src.main:app --host 0.0.0.0 --port 8000
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: DATABASE_HOST
+          value: "postgres"
+        - name: DATABASE_PORT
+          value: "5432"
+        - name: DATABASE_NAME
+          value: "agentos"
+        - name: DATABASE_USER
+          value: "postgres"
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+        - name: SERVICE_NAME
+          value: "runtime"
+        volumeMounts:
+        - name: app-code
+          mountPath: /app/services/runtime
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: app-code
+        hostPath:
+          path: /Users/upalc/AgentOS/agentos
+          type: Directory
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: runtime
+  namespace: agentos
+spec:
+  selector:
+    app: runtime
+  ports:
+  - port: 8000
+    targetPort: 8000
+    nodePort: 30000
+  type: NodePort
+
+---
+# ATP Ingest Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingest
+  namespace: agentos
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ingest
+  template:
+    metadata:
+      labels:
+        app: ingest
+    spec:
+      initContainers:
+      - name: wait-for-postgres
+        image: busybox:1.36
+        command: ['sh', '-c', 'until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done']
+      containers:
+      - name: ingest
+        image: python:3.11-slim
+        workingDir: /app
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            pip install --no-cache-dir fastapi==0.104.1 uvicorn[standard]==0.24.0 asyncpg==0.29.0 pydantic==2.5.0 python-dateutil==2.8.2
+            cd /app/services/observability/ingest
+            uvicorn main:app --host 0.0.0.0 --port 8001
+        ports:
+        - containerPort: 8001
+          name: http
+        env:
+        - name: DATABASE_HOST
+          value: "postgres"
+        - name: DATABASE_PORT
+          value: "5432"
+        - name: DATABASE_NAME
+          value: "agentos"
+        - name: DATABASE_USER
+          value: "postgres"
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: app-code
+          mountPath: /app
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: app-code
+        hostPath:
+          path: /Users/upalc/AgentOS/agentos
+          type: Directory
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingest
+  namespace: agentos
+spec:
+  selector:
+    app: ingest
+  ports:
+  - port: 8001
+    targetPort: 8001
+    nodePort: 30001
+  type: NodePort
+
+---
+# OTel Bridge Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-bridge
+  namespace: agentos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-bridge
+  template:
+    metadata:
+      labels:
+        app: otel-bridge
+    spec:
+      initContainers:
+      - name: wait-for-postgres
+        image: busybox:1.36
+        command: ['sh', '-c', 'until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done']
+      containers:
+      - name: otel-bridge
+        image: python:3.11-slim
+        workingDir: /app
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            pip install --no-cache-dir fastapi==0.104.1 uvicorn[standard]==0.24.0 asyncpg==0.29.0 pydantic==2.5.0 opentelemetry-api==1.21.0 opentelemetry-sdk==1.21.0 opentelemetry-exporter-otlp-proto-grpc==1.21.0 opentelemetry-exporter-jaeger==1.21.0 python-dateutil==2.8.2
+            cd /app/services/observability/o11y-bridge
+            uvicorn main:app --host 0.0.0.0 --port 8002
+        ports:
+        - containerPort: 8002
+          name: http
+        env:
+        - name: DATABASE_HOST
+          value: "postgres"
+        - name: DATABASE_PORT
+          value: "5432"
+        - name: DATABASE_NAME
+          value: "agentos"
+        - name: DATABASE_USER
+          value: "postgres"
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: app-code
+          mountPath: /app
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8002
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: app-code
+        hostPath:
+          path: /Users/upalc/AgentOS/agentos
+          type: Directory
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-bridge
+  namespace: agentos
+spec:
+  selector:
+    app: otel-bridge
+  ports:
+  - port: 8002
+    targetPort: 8002
+  type: ClusterIP
+
+---
+# Observability API Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observability-api
+  namespace: agentos
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: observability-api
+  template:
+    metadata:
+      labels:
+        app: observability-api
+    spec:
+      initContainers:
+      - name: wait-for-postgres
+        image: busybox:1.36
+        command: ['sh', '-c', 'until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done']
+      containers:
+      - name: observability-api
+        image: python:3.11-slim
+        workingDir: /app
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            pip install --no-cache-dir fastapi==0.104.1 uvicorn[standard]==0.24.0 asyncpg==0.29.0 pydantic==2.5.0 python-dateutil==2.8.2
+            cd /app/services/observability/api
+            uvicorn main:app --host 0.0.0.0 --port 8003
+        ports:
+        - containerPort: 8003
+          name: http
+        env:
+        - name: DATABASE_HOST
+          value: "postgres"
+        - name: DATABASE_PORT
+          value: "5432"
+        - name: DATABASE_NAME
+          value: "agentos"
+        - name: DATABASE_USER
+          value: "postgres"
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: app-code
+          mountPath: /app
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8003
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8003
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: app-code
+        hostPath:
+          path: /Users/upalc/AgentOS/agentos
+          type: Directory
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-api
+  namespace: agentos
+spec:
+  selector:
+    app: observability-api
+  ports:
+  - port: 8003
+    targetPort: 8003
+    nodePort: 30003
+  type: NodePort
