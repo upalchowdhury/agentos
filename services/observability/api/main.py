@@ -12,7 +12,14 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+try:
+    from spans_api import router as spans_router
+except ImportError:
+    spans_router = None
+    print("Warning: spans_api not available")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -122,10 +129,23 @@ async def init_db():
 
 
 app = FastAPI(
-    title="Observability API",
+    title="AgentOS Observability API",
     description="Trace explorer and metrics API for AgentOS",
-    version="0.1.0",
+    version="1.0.0",
 )
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include spans router if available
+if spans_router:
+    app.include_router(spans_router)
 
 
 @app.on_event("startup")
@@ -361,6 +381,32 @@ async def get_agent_metrics(agent_id: str):
         )
 
 
+@app.get("/v1/agents")
+async def get_agents():
+    """Get all registered agents"""
+    if not db_pool:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+    
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, name, owner_id, status, model_type, created_at
+            FROM agents
+            ORDER BY created_at DESC
+        """)
+        
+        return [
+            {
+                "agent_id": str(row["id"]),
+                "name": row["name"],
+                "description": f"Model {row['model_type']} Agent",
+                "owner_id": row["owner_id"],
+                "status": row["status"],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None
+            }
+            for row in rows
+        ]
+
+
 @app.get("/v1/cost/summary")
 async def get_cost_summary(
     agent_id: Optional[str] = None,
@@ -424,15 +470,6 @@ async def get_cost_summary(
             "compute_cost_usd": float(row["compute_cost"]) if row["compute_cost"] else 0.0,
             "llm_api_cost_usd": float(row["llm_api_cost"]) if row["llm_api_cost"] else 0.0,
         }
-
-
-@app.get("/health")
-async def health():
-    """Health check"""
-    if not db_pool:
-        return {"status": "unhealthy", "reason": "no database"}
-    
-    return {"status": "healthy"}
 
 
 if __name__ == "__main__":

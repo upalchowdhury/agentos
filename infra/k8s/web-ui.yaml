@@ -183,7 +183,8 @@ data:
     <p class="text-gray-500 dark:text-gray-400 text-sm mt-1">All registered agents</p>
     </div>
     </div>
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <div id="agents-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <!-- Model B Test Agent (static) -->
     <div class="bg-gray-100 dark:bg-component-dark rounded-xl border border-gray-200 dark:border-border-dark p-6">
     <div class="flex items-center justify-between mb-4">
     <div class="bg-blue-100 dark:bg-blue-900/30 rounded-lg p-3">
@@ -200,6 +201,55 @@ data:
     </div>
     </div>
     <button onclick="invokeTestAgent()" class="w-full px-3 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-blue-600">Invoke Now</button>
+    </div>
+    
+    <!-- Demo Agents (will be populated) -->
+    <div class="bg-gray-100 dark:bg-component-dark rounded-xl border border-gray-200 dark:border-border-dark p-6">
+    <div class="flex items-center justify-between mb-4">
+    <div class="bg-purple-100 dark:bg-purple-900/30 rounded-lg p-3">
+    <span class="material-symbols-outlined text-purple-600">psychology</span>
+    </div>
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
+    </div>
+    <h3 class="text-gray-900 dark:text-white text-lg font-bold mb-2">Orchestrator (GPT-4o)</h3>
+    <p class="text-gray-500 dark:text-gray-400 text-sm mb-4">Workflow coordinator</p>
+    <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">Port: 9000</div>
+    </div>
+    
+    <div class="bg-gray-100 dark:bg-component-dark rounded-xl border border-gray-200 dark:border-border-dark p-6">
+    <div class="flex items-center justify-between mb-4">
+    <div class="bg-green-100 dark:bg-green-900/30 rounded-lg p-3">
+    <span class="material-symbols-outlined text-green-600">search</span>
+    </div>
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
+    </div>
+    <h3 class="text-gray-900 dark:text-white text-lg font-bold mb-2">Research (Claude)</h3>
+    <p class="text-gray-500 dark:text-gray-400 text-sm mb-4">Deep research agent</p>
+    <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">Port: 9001</div>
+    </div>
+    
+    <div class="bg-gray-100 dark:bg-component-dark rounded-xl border border-gray-200 dark:border-border-dark p-6">
+    <div class="flex items-center justify-between mb-4">
+    <div class="bg-orange-100 dark:bg-orange-900/30 rounded-lg p-3">
+    <span class="material-symbols-outlined text-orange-600">edit_note</span>
+    </div>
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
+    </div>
+    <h3 class="text-gray-900 dark:text-white text-lg font-bold mb-2">Writer (GPT-4o-mini)</h3>
+    <p class="text-gray-500 dark:text-gray-400 text-sm mb-4">Content generator</p>
+    <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">Port: 9002</div>
+    </div>
+    
+    <div class="bg-gray-100 dark:bg-component-dark rounded-xl border border-gray-200 dark:border-border-dark p-6">
+    <div class="flex items-center justify-between mb-4">
+    <div class="bg-red-100 dark:bg-red-900/30 rounded-lg p-3">
+    <span class="material-symbols-outlined text-red-600">rate_review</span>
+    </div>
+    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
+    </div>
+    <h3 class="text-gray-900 dark:text-white text-lg font-bold mb-2">Reviewer (Gemini)</h3>
+    <p class="text-gray-500 dark:text-gray-400 text-sm mb-4">Quality assurance</p>
+    <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">Port: 9003</div>
     </div>
     </div>
     </div>
@@ -402,11 +452,40 @@ data:
         fetchData();
     }
 
-    function loadAgentsPage() {
-        if (currentData.traces && currentData.traces.length > 0) {
-            const count = currentData.traces.length;
-            const countEl = document.getElementById('agent-invocations-count');
-            if (countEl) countEl.textContent = count;
+    async function loadAgentsPage() {
+        try {
+            const response = await fetch(`${API_BASE}/agents`);
+            const agents = await response.json();
+            
+            const container = document.querySelector('#page-agents .grid');
+            if (!container || agents.length === 0) return;
+            
+            container.innerHTML = agents.map(agent => `
+                <div class="bg-gray-100 dark:bg-component-dark rounded-xl border border-gray-200 dark:border-border-dark p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="bg-blue-100 dark:bg-blue-900/30 rounded-lg p-3">
+                            <span class="material-symbols-outlined text-blue-600">smart_toy</span>
+                        </div>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            agent.status === 'active' 
+                                ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300'
+                                : 'bg-gray-100 text-gray-800 dark:bg-gray-900/50 dark:text-gray-300'
+                        }">
+                            ${agent.status || 'Unknown'}
+                        </span>
+                    </div>
+                    <h3 class="text-gray-900 dark:text-white text-lg font-bold mb-2">${agent.name}</h3>
+                    <p class="text-gray-500 dark:text-gray-400 text-sm mb-4">${agent.description || 'Agent'}</p>
+                    <div class="space-y-2 text-sm mb-4">
+                        <div class="flex justify-between">
+                            <span class="text-gray-500 dark:text-gray-400">ID:</span>
+                            <span class="text-gray-900 dark:text-white font-mono text-xs">${agent.agent_id.substring(0, 16)}...</span>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        } catch (error) {
+            console.error('Failed to load agents:', error);
         }
     }
 
