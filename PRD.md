@@ -84,6 +84,7 @@ This workbook is the implementation-ready source for planning and tracking the A
 
 ---
 
+
 ## 8) Non-Functional Requirements
 - p95 ingest < 200ms; handle 500 RPS telemetry bursts.
 - Availability 99.5% MVP.
