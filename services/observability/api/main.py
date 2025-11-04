@@ -159,6 +159,12 @@ async def shutdown():
         await db_pool.close()
 
 
+@app.get("/health")
+async def health():
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "observability-api"}
+
+
 @app.get("/v1/traces/{trace_id}", response_model=TraceDetail)
 async def get_trace(trace_id: str):
     """
