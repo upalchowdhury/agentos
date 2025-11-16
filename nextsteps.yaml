@@ -1,0 +1,5 @@
+Generating SQLAlchemy models from the DDL
+
+Generating a docker-compose environment (Postgres + Kafka + Tempo + OpenSearch)
+
+Or scaffolding pytest + Playwright tests around these APIs.

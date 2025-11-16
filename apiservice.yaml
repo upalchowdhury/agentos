@@ -1,0 +1,722 @@
+FastAPI Service Stubs — Based on OpenAPI
+
+This is a minimal but complete skeleton mirroring your OpenAPI groups:
+
+main.py for app wiring and router registration
+
+models for Pydantic equivalents of schemas (only key ones; you can extend)
+
+routers for each tag
+
+You can generate full OpenAPI from this app, or keep your hand-written YAML as the contract.
+
+3.1 backend/app/main.py
+# backend/app/main.py
+from fastapi import FastAPI
+from .routers import (
+    runtime,
+    agents,
+    ingest,
+    traces,
+    replay,
+    cost,
+    alerts,
+    tenants,
+    policies,
+    connectors,
+    health,
+)
+
+app = FastAPI(
+    title="AgentOS / AgentFlow Unified API",
+    version="1.0.0",
+)
+
+# Routers
+app.include_router(runtime.router, prefix="/v1/runtime", tags=["Runtime"])
+app.include_router(agents.router, prefix="/v1/agents", tags=["Agents"])
+app.include_router(ingest.router, prefix="/v1/telemetry", tags=["Ingest"])
+app.include_router(traces.router, prefix="/v1", tags=["Traces"])  # /traces, /spans, /edges
+app.include_router(replay.router, prefix="/v1/replay", tags=["Replay"])
+app.include_router(cost.router, prefix="/v1/cost", tags=["Cost"])
+app.include_router(alerts.router, prefix="/v1/alerts", tags=["Alerts"])
+app.include_router(tenants.router, prefix="/v1/tenants", tags=["Tenants"])
+app.include_router(policies.router, prefix="/v1/policies", tags=["Policies"])
+app.include_router(connectors.router, prefix="/v1/connectors", tags=["Connectors"])
+app.include_router(health.router, prefix="/v1/health", tags=["Health"])
+
+3.2 backend/app/models/base.py
+# backend/app/models/base.py
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+from pydantic import BaseModel, Field
+
+
+class Pagination(BaseModel):
+    nextCursor: Optional[str] = None
+    previousCursor: Optional[str] = None
+    limit: int = 50
+    hasMore: bool = False
+
+
+class ErrorResponse(BaseModel):
+    code: str
+    message: str
+    requestId: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+3.3 backend/app/models/core.py
+# backend/app/models/core.py
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+from pydantic import BaseModel
+from .base import Pagination
+
+
+class ToolCall(BaseModel):
+    name: str
+    durationMs: int
+    status: str
+    request: Optional[str] = None
+    response: Optional[str] = None
+
+
+class PIIFlags(BaseModel):
+    piiDetected: Optional[bool] = False
+    piiTypes: Optional[List[str]] = None
+    redactionApplied: Optional[bool] = False
+    redactionStrategy: Optional[str] = None
+
+
+class CostRecord(BaseModel):
+    traceId: Optional[str] = None
+    spanId: Optional[str] = None
+    agentId: Optional[str] = None
+    team: Optional[str] = None
+    platform: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    inputTokens: Optional[int] = None
+    outputTokens: Optional[int] = None
+    amountUsd: float
+    currency: str = "USD"
+    timestamp: datetime
+
+
+class CostSummaryBucket(BaseModel):
+    key: str
+    amountUsd: float
+    executions: int
+
+
+class CostSummary(BaseModel):
+    groupBy: Optional[str] = None
+    from_: Optional[datetime] = None
+    to: Optional[datetime] = None
+    totals: List[CostSummaryBucket] = []
+
+
+class AgentExecution(BaseModel):
+    id: str
+    platform: str
+    tenantId: Optional[str]
+    timestamp: datetime
+    # simplified; add full fields as needed
+    agent: Dict[str, Any]
+    execution: Dict[str, Any]
+    llm: Optional[Dict[str, Any]]
+    io: Optional[Dict[str, Any]]
+    context: Dict[str, Any]
+    toolsCalled: Optional[List[ToolCall]] = None
+
+
+class Agent(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    platform: str
+    environment: str = "production"
+    team: Optional[str] = None
+    version: Optional[str] = None
+    runtimeType: str = "external"
+    telemetryBadge: str = "external"
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class Span(BaseModel):
+    spanId: str
+    traceId: str
+    parentSpanId: Optional[str] = None
+    name: str
+    serviceName: Optional[str] = None
+    kind: Optional[str] = None
+    attributes: Optional[Dict[str, str]] = None
+    startTime: datetime
+    endTime: datetime
+    status: Optional[str] = None
+    statusMessage: Optional[str] = None
+    toolCalls: Optional[List[ToolCall]] = None
+    piiFlags: Optional[PIIFlags] = None
+
+
+class Edge(BaseModel):
+    id: str
+    fromSpanId: str
+    toSpanId: str
+    type: str
+    metadata: Optional[Dict[str, str]] = None
+
+
+class Trace(BaseModel):
+    traceId: str
+    rootSpanId: Optional[str] = None
+    spans: List[Span]
+    edges: Optional[List[Edge]] = None
+    cost: Optional[CostRecord] = None
+    piiFlags: Optional[PIIFlags] = None
+    createdAt: datetime
+
+3.4 backend/app/models/admin.py
+# backend/app/models/admin.py
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+from pydantic import BaseModel
+from .core import PIIFlags
+
+
+class PIIConfig(BaseModel):
+    enabled: bool = True
+    regexPatterns: Optional[List[str]] = None
+    nerModels: Optional[List[str]] = None
+    defaultStrategy: str = "mask"
+
+
+class Tenant(BaseModel):
+    id: str
+    name: str
+    slug: str
+    createdAt: datetime
+    piiConfig: Optional[PIIConfig] = None
+    retentionDays: int = 30
+    status: str = "active"
+
+
+class PolicyBundle(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    rules: str
+    version: str
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class Connector(BaseModel):
+    id: str
+    type: str
+    name: str
+    description: Optional[str] = None
+    config: Dict[str, Any]
+    status: str = "active"
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class ConnectorHealth(BaseModel):
+    status: str
+    lastCheckAt: Optional[datetime] = None
+    details: Optional[Dict[str, str]] = None
+
+
+class AlertRule(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    type: str
+    expression: str
+    enabled: bool = True
+    channels: List[str]
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class AlertEvent(BaseModel):
+    id: str
+    ruleId: str
+    status: str
+    message: Optional[str] = None
+    triggeredAt: datetime
+    resolvedAt: Optional[datetime] = None
+    context: Optional[Dict[str, str]] = None
+
+3.5 Routers — examples
+
+I’ll stub each router with signatures and TODOs so your team / Claude Code can fill in DB/stream integrations.
+
+backend/app/routers/runtime.py
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Any, Dict, Optional
+from datetime import datetime
+from ..models.core import CostRecord
+
+router = APIRouter()
+
+class DeployRequest(BaseModel):
+    name: str
+    sourceUrl: str
+    runtimeConfig: Optional[Dict[str, Any]] = None
+    timeoutSeconds: int = 60
+    maxConcurrency: int = 10
+
+
+class DeployResponse(BaseModel):
+    agentId: str
+    versionId: str
+    status: str
+
+
+class RollbackRequest(BaseModel):
+    agentId: str
+    targetVersionId: Optional[str] = None
+
+
+class InvokeRequest(BaseModel):
+    input: str
+    context: Optional[Dict[str, Any]] = None
+    traceOptions: Optional[Dict[str, Any]] = None
+
+
+class InvokeResponse(BaseModel):
+    traceId: str
+    output: str
+    cost: Optional[CostRecord] = None
+
+
+@router.post("/deploy", response_model=DeployResponse, status_code=201)
+async def deploy_agent(req: DeployRequest) -> DeployResponse:
+    # TODO: trigger build pipeline + DB insert
+    return DeployResponse(
+        agentId="agent-123",
+        versionId="v1",
+        status="deploying",
+    )
+
+
+@router.post("/rollback", response_model=DeployResponse)
+async def rollback_agent(req: RollbackRequest) -> DeployResponse:
+    # TODO: do rollback logic
+    return DeployResponse(agentId=req.agentId, versionId="v0", status="active")
+
+
+@router.post("/invoke/{agentId}", response_model=InvokeResponse)
+async def invoke_agent(agentId: str, req: InvokeRequest) -> InvokeResponse:
+    # TODO: enqueue invoke to runtime and wait for result
+    now = datetime.utcnow().isoformat()
+    return InvokeResponse(
+        traceId=f"trace-{now}",
+        output="stubbed output",
+        cost=None,
+    )
+
+backend/app/routers/agents.py
+from fastapi import APIRouter, Query, HTTPException
+from typing import List, Optional
+from datetime import datetime
+from ..models.core import Agent
+from ..models.base import Pagination
+
+router = APIRouter()
+
+
+class AgentListResponse(BaseModel):
+    data: List[Agent]
+    pagination: Pagination
+
+
+from pydantic import BaseModel  # import after to avoid circular examples
+
+
+@router.get("", response_model=AgentListResponse)
+async def list_agents(
+    platform: Optional[str] = None,
+    environment: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    cursor: Optional[str] = None,
+):
+    # TODO: query DB (agents table)
+    dummy_agent = Agent(
+        id="agent-123",
+        name="Demo Agent",
+        platform=platform or "runtime",
+        environment=environment or "production",
+        createdAt=datetime.utcnow(),
+        updatedAt=datetime.utcnow(),
+        runtimeType="native",
+        telemetryBadge="verified",
+    )
+    return AgentListResponse(
+        data=[dummy_agent],
+        pagination=Pagination(limit=limit, hasMore=False),
+    )
+
+
+@router.post("", response_model=Agent, status_code=201)
+async def create_agent(agent: Agent) -> Agent:
+    # TODO: insert into DB
+    return agent
+
+
+@router.get("/{agentId}", response_model=Agent)
+async def get_agent(agentId: str) -> Agent:
+    # TODO: load from DB
+    dummy = Agent(
+        id=agentId,
+        name="Demo Agent",
+        platform="runtime",
+        environment="production",
+        createdAt=datetime.utcnow(),
+        updatedAt=datetime.utcnow(),
+        runtimeType="native",
+        telemetryBadge="verified",
+    )
+    return dummy
+
+backend/app/routers/ingest.py
+from fastapi import APIRouter, HTTPException
+from typing import List
+from ..models.core import AgentExecution
+from ..models.base import ErrorResponse
+
+router = APIRouter()
+
+
+class IngestPayload(BaseModel):
+    events: List[AgentExecution]
+
+
+class IngestResult(BaseModel):
+    accepted: int
+    rejected: int
+
+
+from pydantic import BaseModel  # after for clarity
+
+
+@router.post("/events", response_model=IngestResult, responses={400: {"model": ErrorResponse}})
+async def ingest_events(payload: IngestPayload) -> IngestResult:
+    # TODO: push to Kafka / PubSub
+    accepted = len(payload.events)
+    rejected = 0
+    return IngestResult(accepted=accepted, rejected=rejected)
+
+backend/app/routers/traces.py
+from fastapi import APIRouter, HTTPException
+from typing import List, Optional, Any, Dict
+from ..models.core import Trace
+from ..models.base import Pagination, ErrorResponse
+from pydantic import BaseModel
+from datetime import datetime
+
+router = APIRouter()
+
+
+@router.get("/traces/{traceId}", response_model=Trace, responses={404: {"model": ErrorResponse}})
+async def get_trace(traceId: str) -> Trace:
+    # TODO: query Tempo/Jaeger and/or DB mirror
+    now = datetime.utcnow()
+    return Trace(
+        traceId=traceId,
+        rootSpanId="root-span",
+        spans=[],
+        edges=[],
+        cost=None,
+        piiFlags=None,
+        createdAt=now,
+    )
+
+
+class TraceSearchFilters(BaseModel):
+    platform: Optional[str] = None
+    agentId: Optional[str] = None
+    status: Optional[str] = None
+    piiDetected: Optional[bool] = None
+    minCostUsd: Optional[float] = None
+    maxCostUsd: Optional[float] = None
+    from_: Optional[datetime] = None
+    to: Optional[datetime] = None
+
+
+class TraceSearchRequest(BaseModel):
+    query: Optional[str] = None
+    filters: Optional[TraceSearchFilters] = None
+    limit: int = 50
+    cursor: Optional[str] = None
+
+
+class TraceSearchResponse(BaseModel):
+    data: List[Trace]
+    pagination: Pagination
+
+
+@router.post("/traces/search", response_model=TraceSearchResponse)
+async def search_traces(req: TraceSearchRequest) -> TraceSearchResponse:
+    # TODO: query OpenSearch / Tempo index
+    return TraceSearchResponse(
+        data=[],
+        pagination=Pagination(limit=req.limit, hasMore=False),
+    )
+
+backend/app/routers/replay.py
+from fastapi import APIRouter, HTTPException
+from ..models.admin import AlertEvent  # just reusing datetime etc.
+from ..models.base import ErrorResponse
+from ..models.core import Span
+from ..models.admin import PIIConfig  # example reuse
+from pydantic import BaseModel
+from typing import Optional
+from datetime import datetime
+from ..models.admin import AlertEvent  # not ideal but ok for skeleton
+
+router = APIRouter()
+
+
+class ReplayRequest(BaseModel):
+    forceModelVersion: Optional[str] = None
+    overrideParameters: Optional[dict] = None
+    dryRun: bool = False
+
+
+class ReplayResult(BaseModel):
+    spanId: str
+    originalOutput: str
+    replayedOutput: str
+    parity: str
+    score: float
+    diff: str
+
+
+@router.post("/{spanId}", response_model=ReplayResult, responses={404: {"model": ErrorResponse}})
+async def replay_span(spanId: str, req: ReplayRequest) -> ReplayResult:
+    # TODO: look up span, reconstruct request, call runtime
+    return ReplayResult(
+        spanId=spanId,
+        originalOutput="original",
+        replayedOutput="replayed",
+        parity="similar",
+        score=0.9,
+        diff="stubbed diff",
+    )
+
+backend/app/routers/cost.py
+from fastapi import APIRouter, Query
+from typing import List, Optional
+from datetime import datetime
+from ..models.core import CostRecord, CostSummary
+from ..models.base import Pagination
+from pydantic import BaseModel
+
+router = APIRouter()
+
+
+class CostRecordsResponse(BaseModel):
+    data: List[CostRecord]
+    pagination: Pagination
+
+
+@router.get("/records", response_model=CostRecordsResponse)
+async def list_cost_records(
+    from_: Optional[datetime] = Query(None, alias="from"),
+    to: Optional[datetime] = None,
+    agentId: Optional[str] = None,
+    team: Optional[str] = None,
+    limit: int = 100,
+    cursor: Optional[str] = None,
+):
+    # TODO: query cost_records table
+    return CostRecordsResponse(
+        data=[],
+        pagination=Pagination(limit=limit, hasMore=False),
+    )
+
+
+@router.get("/summary", response_model=CostSummary)
+async def get_cost_summary(
+    groupBy: Optional[str] = Query(None, regex="^(agent|team|platform|environment|customer)$"),
+    from_: Optional[datetime] = Query(None, alias="from"),
+    to: Optional[datetime] = None,
+):
+    # TODO: aggregate cost records
+    return CostSummary(groupBy=groupBy, totals=[])
+
+backend/app/routers/alerts.py
+from fastapi import APIRouter, HTTPException
+from typing import List, Optional
+from datetime import datetime
+from ..models.admin import AlertRule, AlertEvent
+from pydantic import BaseModel
+
+router = APIRouter()
+
+
+@router.get("/rules", response_model=List[AlertRule])
+async def list_alert_rules():
+    # TODO: query alert_rules table
+    return []
+
+
+@router.post("/rules", response_model=AlertRule, status_code=201)
+async def create_alert_rule(rule: AlertRule) -> AlertRule:
+    # TODO: insert rule
+    return rule
+
+
+@router.patch("/rules/{ruleId}", response_model=AlertRule)
+async def update_alert_rule(ruleId: str, rule: AlertRule) -> AlertRule:
+    # TODO: update rule
+    return rule
+
+
+@router.delete("/rules/{ruleId}", status_code=204)
+async def delete_alert_rule(ruleId: str):
+    # TODO: delete rule
+    return None
+
+
+@router.get("/events", response_model=List[AlertEvent])
+async def list_alert_events(
+    from_: Optional[datetime] = None,
+    to: Optional[datetime] = None,
+    ruleId: Optional[str] = None,
+):
+    # TODO: query alert_events
+    return []
+
+backend/app/routers/tenants.py
+from fastapi import APIRouter, HTTPException
+from typing import List
+from ..models.admin import Tenant
+from datetime import datetime
+
+router = APIRouter()
+
+
+@router.get("", response_model=List[Tenant])
+async def list_tenants():
+    # TODO: admin-only, query tenants
+    return []
+
+
+@router.post("", response_model=Tenant, status_code=201)
+async def create_tenant(tenant: Tenant) -> Tenant:
+    # TODO: insert tenant
+    return tenant
+
+
+@router.get("/{tenantId}", response_model=Tenant)
+async def get_tenant(tenantId: str) -> Tenant:
+    # TODO: fetch tenant
+    now = datetime.utcnow()
+    return Tenant(
+        id=tenantId,
+        name="Demo Tenant",
+        slug="demo",
+        createdAt=now,
+        piiConfig=None,
+        retentionDays=30,
+        status="active",
+    )
+
+backend/app/routers/policies.py
+from fastapi import APIRouter
+from typing import List
+from pydantic import BaseModel
+from ..models.admin import PolicyBundle
+
+router = APIRouter()
+
+
+@router.get("/bundles", response_model=List[PolicyBundle])
+async def list_policy_bundles():
+    # TODO: query policy_bundles
+    return []
+
+
+@router.post("/bundles", response_model=PolicyBundle, status_code=201)
+async def upsert_policy_bundle(bundle: PolicyBundle) -> PolicyBundle:
+    # TODO: upsert behavior
+    return bundle
+
+
+class PolicyInput(BaseModel):
+    input: dict
+
+
+class PolicyDecision(BaseModel):
+    allow: bool
+    obligations: List[str] = []
+
+
+@router.post("/enforce", response_model=PolicyDecision)
+async def enforce_policy(payload: PolicyInput) -> PolicyDecision:
+    # TODO: call OPA / policy engine
+    return PolicyDecision(allow=True, obligations=[])
+
+backend/app/routers/connectors.py
+from fastapi import APIRouter, HTTPException
+from typing import List
+from ..models.admin import Connector, ConnectorHealth
+
+router = APIRouter()
+
+
+@router.get("", response_model=List[Connector])
+async def list_connectors():
+    # TODO: query connectors table
+    return []
+
+
+@router.post("", response_model=Connector, status_code=201)
+async def create_connector(connector: Connector) -> Connector:
+    # TODO: insert into DB + maybe trigger infra provisioning
+    return connector
+
+
+@router.get("/{connectorId}", response_model=Connector)
+async def get_connector(connectorId: str) -> Connector:
+    # TODO: fetch from DB
+    raise HTTPException(status_code=404, detail="Not implemented")
+
+
+@router.patch("/{connectorId}", response_model=Connector)
+async def update_connector(connectorId: str, connector: Connector) -> Connector:
+    # TODO: update DB
+    return connector
+
+
+@router.get("/{connectorId}/health", response_model=ConnectorHealth)
+async def get_connector_health(connectorId: str) -> ConnectorHealth:
+    # TODO: ping connector
+    return ConnectorHealth(status="healthy")
+
+backend/app/routers/health.py
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+router = APIRouter()
+
+
+class HealthStatus(BaseModel):
+    status: str
+
+
+@router.get("", response_model=HealthStatus)
+async def health():
+    return HealthStatus(status="ok")
+
+
+@router.get("/ready", response_model=HealthStatus)
+async def ready():
+    # TODO: check DB, Kafka, Flink, Tempo readiness
+    return HealthStatus(status="ready")
