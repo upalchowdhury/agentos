@@ -132,6 +132,20 @@ paths:
   /v1/alerts/events:
     $ref: ./paths/alerts.yaml#/paths/~1v1~1alerts~1events
 
+  # Analytics
+  /v1/analytics/risk:
+    $ref: ./paths/analytics.yaml#/paths/~1v1~1analytics~1risk
+  /v1/analytics/roi:
+    $ref: ./paths/analytics.yaml#/paths/~1v1~1analytics~1roi
+  /v1/analytics/drift:
+    $ref: ./paths/analytics.yaml#/paths/~1v1~1analytics~1drift
+
+  # Prompts
+  /v1/prompts:
+    $ref: ./paths/prompts.yaml#/paths/~1v1~1prompts
+  /v1/prompts/{promptId}/versions:
+    $ref: ./paths/prompts.yaml#/paths/~1v1~1prompts~1{promptId}~1versions
+
   # Tenants
   /v1/tenants:
     $ref: ./paths/tenants.yaml#/paths/~1v1~1tenants
@@ -194,6 +208,16 @@ components:
       $ref: ./components/schemas/AlertRule.yaml
     AlertEvent:
       $ref: ./components/schemas/AlertEvent.yaml
+    RiskMetrics:
+      $ref: ./components/schemas/RiskMetrics.yaml
+    ROIMetrics:
+      $ref: ./components/schemas/ROIMetrics.yaml
+    PolicyDrift:
+      $ref: ./components/schemas/PolicyDrift.yaml
+    Prompt:
+      $ref: ./components/schemas/Prompt.yaml
+    PromptVersion:
+      $ref: ./components/schemas/PromptVersion.yaml
     ReplayRequest:
       $ref: ./components/schemas/ReplayRequest.yaml
     ReplayResult:

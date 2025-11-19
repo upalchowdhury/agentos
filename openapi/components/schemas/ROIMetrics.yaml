@@ -1,0 +1,17 @@
+type: object
+properties:
+  totalCost:
+    type: number
+    format: float
+  estimatedValue:
+    type: number
+    format: float
+  roiPercentage:
+    type: number
+    format: float
+  savings:
+    type: number
+    format: float
+  currency:
+    type: string
+    default: USD

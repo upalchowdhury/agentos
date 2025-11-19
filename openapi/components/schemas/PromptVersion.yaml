@@ -1,0 +1,18 @@
+type: object
+required: [id, promptId, version, content]
+properties:
+  id:
+    type: string
+  promptId:
+    type: string
+  version:
+    type: string
+  content:
+    type: string
+  variables:
+    type: object
+  author:
+    type: string
+  createdAt:
+    type: string
+    format: date-time

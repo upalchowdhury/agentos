@@ -37,21 +37,29 @@ static_resources:
             end
             
             function envoy_on_response(response_handle)
-              -- Send ATP telemetry event
+              -- Send AgentOS telemetry event (Unified Schema)
               local start_time = response_handle:headers():get("x-agentos-start-time")
               local trace_id = response_handle:headers():get("x-agentos-trace-id")
-              local status = response_handle:headers():get(":status")
+              local status_code = response_handle:headers():get(":status")
               
               if start_time ~= nil and trace_id ~= nil then
                 local end_time = os.time()
-                local latency_ms = (end_time - tonumber(start_time)) * 1000
+                local duration_ms = (end_time - tonumber(start_time)) * 1000
+                local status = "success"
+                if tonumber(status_code) >= 400 then
+                  status = "failure"
+                end
                 
-                local telemetry_body = string.format(
-                  '{"trace_id":"%s","status":"%s","latency_ms":%d}',
-                  trace_id, status, latency_ms
+                -- Construct minimal AgentExecution object
+                local event_id = trace_id .. "-sidecar"
+                local timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
+                
+                local payload = string.format(
+                  '{"events":[{"id":"%s","platform":"sidecar","timestamp":"%s","agent":{"id":"unknown","name":"sidecar-proxy","version":"1.0.0","type":"workflow"},"execution":{"traceId":"%s","spanId":"%s","durationMs":%d,"status":"%s"},"context":{"environment":"production"}}]}',
+                  event_id, timestamp, trace_id, event_id, duration_ms, status
                 )
                 
-                -- Send to ATP ingest service
+                -- Send to AgentOS Ingest Service
                 local headers, body = response_handle:httpCall(
                   "atp_ingest_service",
                   {
@@ -60,7 +68,7 @@ static_resources:
                     [":authority"] = "atp-ingest",
                     ["content-type"] = "application/json"
                   },
-                  telemetry_body,
+                  payload,
                   5000
                 )
               end

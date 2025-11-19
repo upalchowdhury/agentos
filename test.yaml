@@ -1,0 +1,471 @@
+Nice, let’s wrap a test harness around this thing. I’ll give you ready-to-drop-in scaffolding for:
+
+pytest (API tests using FastAPI’s TestClient)
+
+Playwright (API-level checks via Playwright’s request context, and room to grow into UI tests)
+
+I’ll assume your repo is roughly:
+
+backend/
+  app/
+    main.py
+    routers/
+    models/
+tests/
+
+
+You can adjust paths as needed.
+
+1. Pytest scaffolding for the FastAPI APIs
+1.1 tests/pyproject.toml or pytest.ini
+
+Use either. Here’s a minimal pytest.ini:
+
+# pytest.ini
+[pytest]
+minversion = 7.0
+addopts = -ra -q
+testpaths = tests
+python_files = test_*.py
+asyncio_mode = auto
+
+1.2 tests/conftest.py
+
+Creates a reusable client fixture using FastAPI’s TestClient.
+
+# tests/conftest.py
+import os
+import pytest
+from fastapi.testclient import TestClient
+
+# Ensure we import the app from backend.app.main
+# Adjust this import if your path is different.
+from backend.app.main import app
+
+
+@pytest.fixture(scope="session")
+def test_settings():
+    """
+    Hook for test-specific settings (DB URL, Kafka mocks, etc.).
+    Right now it's just a placeholder.
+    """
+    return {
+        "ENV": "test",
+        # You can put TEST_DATABASE_URL etc. here later.
+    }
+
+
+@pytest.fixture(scope="session")
+def client(test_settings):
+    """
+    Shared TestClient for sync HTTP tests.
+    For async tests, you can use httpx.AsyncClient+lifespan manager instead.
+    """
+    # You can override dependencies here if you add Depends() later.
+    with TestClient(app) as c:
+        yield c
+
+1.3 Health checks: tests/test_health.py
+# tests/test_health.py
+
+def test_health_liveness(client):
+    resp = client.get("/v1/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "ok"
+
+
+def test_health_readiness(client):
+    resp = client.get("/v1/health/ready")
+    assert resp.status_code in (200, 503)
+    data = resp.json()
+    assert "status" in data
+
+1.4 Runtime API tests: tests/test_runtime.py
+
+These hit the stubbed runtime endpoints we defined.
+
+# tests/test_runtime.py
+from uuid import uuid4
+
+
+def test_deploy_agent_minimal(client):
+    payload = {
+        "name": "test-agent",
+        "sourceUrl": "https://github.com/example/agent-repo",
+    }
+    resp = client.post("/v1/runtime/deploy", json=payload)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert "agentId" in body
+    assert "versionId" in body
+    assert body["status"] in ["deploying", "active"]
+
+
+def test_rollback_agent_basic(client):
+    payload = {
+        "agentId": "agent-123"
+    }
+    resp = client.post("/v1/runtime/rollback", json=payload)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["agentId"] == payload["agentId"]
+    assert "versionId" in body
+    assert body["status"] == "active"
+
+
+def test_invoke_agent_happy_path(client):
+    agent_id = "agent-123"
+    payload = {
+        "input": "Hello!",
+        "context": {"user": "test-user"},
+    }
+    resp = client.post(f"/v1/runtime/invoke/{agent_id}", json=payload)
+    assert resp.status_code in (200, 202)
+    data = resp.json()
+    assert "traceId" in data
+    # For 200 we expect an output
+    if resp.status_code == 200:
+        assert "output" in data
+
+1.5 Ingest API tests: tests/test_ingest.py
+# tests/test_ingest.py
+from datetime import datetime, timezone
+from uuid import uuid4
+
+
+def make_agent_execution():
+    now = datetime.now(timezone.utc).isoformat()
+    return {
+        "id": str(uuid4()),
+        "platform": "langchain",
+        "tenantId": "tenant-123",
+        "timestamp": now,
+        "agent": {
+            "id": "agent-123",
+            "name": "LangChain Agent",
+            "version": "v1",
+            "type": "conversational",
+        },
+        "execution": {
+            "traceId": f"trace-{uuid4()}",
+            "spanId": f"span-{uuid4()}",
+            "parentSpanId": None,
+            "durationMs": 1234,
+            "status": "success",
+        },
+        "llm": {
+            "provider": "openai",
+            "model": "gpt-4",
+            "inputTokens": 100,
+            "outputTokens": 50,
+            "totalCostUsd": 0.01,
+        },
+        "io": {
+            "input": "sanitized input",
+            "output": "sanitized output",
+            "piiDetected": False,
+            "piiTypes": [],
+        },
+        "context": {
+            "userId": "user-xyz",
+            "sessionId": str(uuid4()),
+            "environment": "production",
+            "team": "support",
+            "tags": {"customer_tier": "enterprise"},
+        },
+        "toolsCalled": [
+            {
+                "name": "db_query",
+                "durationMs": 50,
+                "status": "success",
+            }
+        ],
+    }
+
+
+def test_ingest_single_event(client):
+    payload = {"events": [make_agent_execution()]}
+    resp = client.post("/v1/telemetry/events", json=payload)
+    assert resp.status_code == 200 or resp.status_code == 202
+    body = resp.json()
+    assert body["accepted"] == 1
+    assert body["rejected"] == 0
+
+
+def test_ingest_multiple_events(client):
+    payload = {"events": [make_agent_execution() for _ in range(3)]}
+    resp = client.post("/v1/telemetry/events", json=payload)
+    assert resp.status_code in (200, 202)
+    body = resp.json()
+    assert body["accepted"] == 3
+    assert body["rejected"] == 0
+
+1.6 Trace & search tests: tests/test_traces.py
+# tests/test_traces.py
+from datetime import datetime, timezone
+
+
+def test_get_trace_not_found_stub(client):
+    # current stub always returns a dummy trace with this ID
+    trace_id = "trace-demo"
+    resp = client.get(f"/v1/traces/{trace_id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["traceId"] == trace_id
+    assert "spans" in body
+
+
+def test_search_traces_basic(client):
+    payload = {
+        "query": "error",
+        "filters": {
+            "platform": "langchain",
+            "status": "failure",
+        },
+        "limit": 10,
+    }
+    resp = client.post("/v1/traces/search", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "data" in data
+    assert "pagination" in data
+    assert isinstance(data["data"], list)
+
+1.7 Cost & alerts tests: tests/test_cost_alerts.py
+# tests/test_cost_alerts.py
+from datetime import datetime, timezone
+
+
+def test_cost_records_empty(client):
+    resp = client.get("/v1/cost/records")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "data" in data
+    assert "pagination" in data
+
+
+def test_cost_summary_basic(client):
+    resp = client.get("/v1/cost/summary?groupBy=agent")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("groupBy") in (None, "agent")
+
+
+def test_list_alert_rules_empty(client):
+    resp = client.get("/v1/alerts/rules")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+You can add more for tenants, policies, connectors; the pattern is the same.
+
+2. Playwright scaffolding
+
+Even if the UI isn’t built yet, we can use Playwright’s APIRequestContext to run API-focused integration tests that:
+
+Hit the real running FastAPI server (e.g., on http://localhost:8000)
+
+Validate end-to-end behavior (no TestClient, real network stack)
+
+Later, when you add a React UI, you can extend these with real page interactions.
+
+2.1 Install Playwright
+
+From repo root (or in a tests/e2e folder):
+
+npm init -y
+npm install -D @playwright/test
+npx playwright install
+
+2.2 playwright.config.ts
+
+Place in repo root or tests/e2e/playwright.config.ts (if in subfolder, adjust paths):
+
+// playwright.config.ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './tests/e2e',
+  timeout: 30_000,
+  expect: {
+    timeout: 5_000,
+  },
+  use: {
+    // Point this to where your FastAPI app runs in dev/test
+    baseURL: process.env.BASE_URL || 'http://localhost:8000',
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
+});
+
+2.3 API smoke tests with Playwright: tests/e2e/health.spec.ts
+// tests/e2e/health.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('API health endpoints', () => {
+  test('liveness returns ok', async ({ request, baseURL }) => {
+    const res = await request.get(`${baseURL}/v1/health`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe('ok');
+  });
+
+  test('readiness returns ready or error', async ({ request, baseURL }) => {
+    const res = await request.get(`${baseURL}/v1/health/ready`);
+    expect([200, 503]).toContain(res.status());
+  });
+});
+
+2.4 Runtime E2E: tests/e2e/runtime.spec.ts
+// tests/e2e/runtime.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Runtime API (E2E via HTTP)', () => {
+  test('deploy -> invoke flow (stub)', async ({ request, baseURL }) => {
+    // Deploy
+    const deployResp = await request.post(`${baseURL}/v1/runtime/deploy`, {
+      data: {
+        name: 'playwright-test-agent',
+        sourceUrl: 'https://github.com/example/agent-repo',
+      },
+    });
+    expect(deployResp.status()).toBe(201);
+    const deployBody = await deployResp.json();
+    expect(deployBody.agentId).toBeTruthy();
+
+    // Invoke
+    const invokeResp = await request.post(
+      `${baseURL}/v1/runtime/invoke/${deployBody.agentId}`,
+      {
+        data: {
+          input: 'Hello from Playwright',
+          context: { user: 'playwright' },
+        },
+      }
+    );
+    expect([200, 202]).toContain(invokeResp.status());
+    const invokeBody = await invokeResp.json();
+    expect(invokeBody.traceId).toBeTruthy();
+  });
+});
+
+2.5 Ingest & trace E2E: tests/e2e/observability.spec.ts
+// tests/e2e/observability.spec.ts
+import { test, expect } from '@playwright/test';
+
+function makeAgentExecution() {
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const traceId = `trace-${crypto.randomUUID()}`;
+  const spanId = `span-${crypto.randomUUID()}`;
+
+  return {
+    id,
+    platform: 'langchain',
+    tenantId: 'tenant-123',
+    timestamp: now,
+    agent: {
+      id: 'agent-123',
+      name: 'Playwright Agent',
+      version: 'v1',
+      type: 'conversational',
+    },
+    execution: {
+      traceId,
+      spanId,
+      parentSpanId: null,
+      durationMs: 1000,
+      status: 'success',
+    },
+    llm: {
+      provider: 'openai',
+      model: 'gpt-4',
+      inputTokens: 10,
+      outputTokens: 5,
+      totalCostUsd: 0.01,
+    },
+    io: {
+      input: 'hello',
+      output: 'world',
+      piiDetected: false,
+      piiTypes: [],
+    },
+    context: {
+      userId: 'user-123',
+      sessionId: crypto.randomUUID(),
+      environment: 'production',
+      team: 'playwright-tests',
+      tags: {
+        customer_tier: 'enterprise',
+      },
+    },
+    toolsCalled: [],
+  };
+}
+
+test.describe('Observability pipeline', () => {
+  test('ingest event and later search trace (eventual)', async ({ request, baseURL }) => {
+    const event = makeAgentExecution();
+
+    // Ingest
+    const ingestRes = await request.post(`${baseURL}/v1/telemetry/events`, {
+      data: { events: [event] },
+    });
+    expect([200, 202]).toContain(ingestRes.status());
+
+    // NOTE: In a real system you might need to wait for processing;
+    // here we just call search with the same traceId for sanity.
+    const searchRes = await request.post(`${baseURL}/v1/traces/search`, {
+      data: {
+        query: event.execution.traceId,
+        filters: {
+          platform: event.platform,
+        },
+        limit: 10,
+      },
+    });
+
+    expect(searchRes.status()).toBe(200);
+    const searchBody = await searchRes.json();
+    expect(searchBody).toHaveProperty('data');
+  });
+});
+
+
+If TypeScript complains about crypto.randomUUID() in Node, you can polyfill with a simple UUID helper or import { randomUUID } from 'crypto';.
+
+2.6 (Optional) UI test skeleton
+
+When you add a React UI (say served at /), you can do:
+
+// tests/e2e/ui-smoke.spec.ts
+import { test, expect } from '@playwright/test';
+
+test('home page loads and hits health API', async ({ page }) => {
+  await page.goto('/');
+  // Example: check that some health indicator appears
+  await expect(page.getByTestId('health-status')).toBeVisible();
+});
+
+3. How to run everything
+
+Pytest:
+
+# from repo root (where pytest.ini lives)
+pytest
+
+
+Playwright:
+
+# Ensure FastAPI app is running, e.g.:
+uvicorn backend.app.main:app --reload --port 8000
+
+# Then run Playwright:
+npx playwright test
+# or with BASE_URL override:
+BASE_URL=http://localhost:8001 npx playwright test

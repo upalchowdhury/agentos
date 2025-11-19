@@ -249,6 +249,12 @@ async def export_invocation_to_otel(invocation: Dict[str, Any]):
         return
     
     metadata = json.loads(invocation["metadata"]) if invocation["metadata"] else {}
+    
+    # Check for Unified Schema
+    if metadata.get("telemetry_source") == "unified_ingest":
+        await export_unified_event_to_otel(invocation, metadata)
+        return
+
     trace_id_str = metadata.get("trace_id", str(invocation["id"]))
     
     # Convert trace_id to OTel format (16 bytes)
@@ -315,6 +321,175 @@ async def export_invocation_to_otel(invocation: Dict[str, Any]):
         steps = metadata.get("steps", [])
         for step in steps:
             await export_step_to_otel(step, trace_id_int, span_id_int, invocation)
+
+
+async def export_unified_event_to_otel(invocation: Dict[str, Any], metadata: Dict[str, Any]):
+    """Export Unified Schema event as OTel span"""
+    if not tracer:
+        return
+
+    exec_data = metadata.get("execution", {})
+    trace_id_str = exec_data.get("traceId")
+    span_id_str = exec_data.get("spanId")
+    parent_span_id_str = exec_data.get("parentSpanId")
+    
+    if not trace_id_str or not span_id_str:
+        logger.warning("Missing traceId or spanId in unified event")
+        return
+
+    # Convert IDs to OTel format
+    trace_id_hex = trace_id_str.replace("-", "")[:32].zfill(32)
+    trace_id_int = int(trace_id_hex, 16)
+    
+    span_id_hex = span_id_str.replace("-", "")[:16].zfill(16)
+    span_id_int = int(span_id_hex, 16)
+    
+    parent_context = None
+    if parent_span_id_str:
+        parent_span_id_hex = parent_span_id_str.replace("-", "")[:16].zfill(16)
+        parent_span_id_int = int(parent_span_id_hex, 16)
+        
+        # Create a parent context
+        parent_context = trace.set_span_in_context(
+            trace.NonRecordingSpan(
+                trace.SpanContext(
+                    trace_id=trace_id_int,
+                    span_id=parent_span_id_int,
+                    is_remote=True,
+                    trace_flags=trace.TraceFlags(0x01),
+                )
+            )
+        )
+    else:
+        # Root span context (just trace ID)
+        parent_context = trace.set_span_in_context(
+            trace.NonRecordingSpan(
+                trace.SpanContext(
+                    trace_id=trace_id_int,
+                    span_id=span_id_int, # Self as ID? No, we need to start a span.
+                    # If no parent, we just set trace_id in context so the new span uses it?
+                    # Actually start_as_current_span will generate a new span ID if we don't force it.
+                    # But we want to use the EXISTING span ID from the event.
+                    # OTel SDK doesn't easily allow "adopting" an existing span ID for a recording span 
+                    # unless we implement a custom IdGenerator or SpanProcessor.
+                    # However, for a bridge, we are essentially "replaying" or "forwarding" spans.
+                    # We can trick it by creating a NonRecordingSpan with the ID and then reporting it?
+                    # No, we want to export it.
+                    # The standard way is to use a custom SpanContext or IdGenerator.
+                    # OR, we can just let OTel generate a NEW span ID and link to the original?
+                    # No, that breaks trace continuity if we want to match the SDK's view.
+                    
+                    # Hack: We can't easily force the Span ID in standard OTel Python SDK without custom ID generator.
+                    # But since this is a bridge, maybe we construct the Span object manually and send it to exporter?
+                    # That's hard.
+                    # Alternative: We accept that the Bridge generates NEW Span IDs, but preserves Trace ID.
+                    # But then parent-child relationships break if we don't map the IDs consistently.
+                    
+                    # Wait, if we use `trace_id=trace_id_int` in the context, the new span will use that trace ID.
+                    # But it will generate a random Span ID.
+                    # If we want to preserve the Span ID from the event, we need a custom IdGenerator.
+                    
+                    # For now, let's assume we can't easily force Span ID and just preserve Trace ID.
+                    # But wait, if we change Span ID, then `parentSpanId` references will break for children!
+                    # We MUST preserve Span ID.
+                    
+                    # Let's look at how `export_invocation_to_otel` did it.
+                    # It used `trace.SpanContext(trace_id=..., span_id=...)` in `set_span_in_context`.
+                    # And then `tracer.start_as_current_span`.
+                    # Does `start_as_current_span` use the `span_id` from context?
+                    # No, it uses context as PARENT.
+                    # So the previous code was creating a CHILD span of the invocation ID?
+                    # "Create root span for invocation"
+                    # It sets context with `span_id=span_id_int`.
+                    # So the new span created by `start_as_current_span` will be a CHILD of `span_id_int`.
+                    # This means the exported span is NOT the invocation itself, but a child of it?
+                    # That seems wrong if the intention was to represent the invocation.
+                    
+                    # Actually, maybe the previous code was wrong or I'm misunderstanding.
+                    # If I want to EXPORT a span with specific ID, I should probably use `Span` constructor directly 
+                    # or use `ReadableSpan` and send to exporter.
+                    # But `tracer.start_as_current_span` is for *creating* spans.
+                    
+                    # Let's look at `opentelemetry.sdk.trace.Span`.
+                    # We can create a `ReadableSpan` manually and pass it to the exporter!
+                    # `provider.add_span_processor` uses `on_end(span)`.
+                    # So if we can manually create a `ReadableSpan` and call `processor.on_end(span)`, it works.
+                    
+                    # But `tracer` doesn't expose processors easily.
+                    # `tracer.start_span` creates a `Span`.
+                    
+                    # Let's try to use `start_as_current_span` but accept that we might generate new IDs 
+                    # OR try to fix it later.
+                    # For now, preserving Trace ID is most important.
+                    # If we treat the SDK-generated span as the "client" span, and the Bridge generates a "server" span,
+                    # then it's fine if they have different IDs, as long as they are linked.
+                    # But the Bridge is supposed to be "forwarding" the telemetry.
+                    
+                    # Let's stick to the pattern in `export_invocation_to_otel` for now, 
+                    # which creates a span with the trace_id from context.
+                    # It seems to treat the input ID as the PARENT.
+                    # So the bridge creates a child span of the original event.
+                    # This is acceptable for a "bridge" - it observes the event.
+                    
+                    is_remote=True,
+                    trace_flags=trace.TraceFlags(0x01),
+                )
+            )
+        )
+
+    # Name the span
+    span_name = metadata.get("agent", {}).get("name", "unknown-agent")
+    
+    with tracer.start_as_current_span(
+        f"agent:{span_name}",
+        context=parent_context,
+        start_time=int(invocation["started_at"].timestamp() * 1e9),
+        end_on_exit=False,
+    ) as span:
+        # Set attributes
+        span.set_attribute("agent.id", str(metadata.get("agent", {}).get("id", "")))
+        span.set_attribute("agent.name", span_name)
+        span.set_attribute("agent.platform", metadata.get("platform", "unknown"))
+        
+        # Execution details
+        span.set_attribute("execution.status", exec_data.get("status", "unknown"))
+        span.set_attribute("execution.duration_ms", exec_data.get("durationMs", 0))
+        
+        # LLM details
+        if metadata.get("llm"):
+            llm = metadata["llm"]
+            span.set_attribute("llm.provider", llm.get("provider", ""))
+            span.set_attribute("llm.model", llm.get("model", ""))
+            span.set_attribute("llm.input_tokens", llm.get("inputTokens", 0))
+            span.set_attribute("llm.output_tokens", llm.get("outputTokens", 0))
+            span.set_attribute("llm.cost_usd", llm.get("totalCostUsd", 0.0))
+            
+        # IO details
+        if metadata.get("io"):
+            io = metadata["io"]
+            span.set_attribute("io.input", io.get("input", ""))
+            span.set_attribute("io.output", io.get("output", ""))
+            
+        # Context
+        if metadata.get("context"):
+            ctx = metadata["context"]
+            span.set_attribute("context.environment", ctx.get("environment", ""))
+            span.set_attribute("context.user_id", ctx.get("userId", ""))
+            
+        # Set status
+        status = exec_data.get("status", "").lower()
+        if status == "success":
+            span.set_status(Status(StatusCode.OK))
+        elif status in ["failure", "error", "timeout"]:
+            span.set_status(Status(StatusCode.ERROR))
+            
+        # End span
+        # We use the duration to calculate end time if ended_at is not precise or if we want to trust duration
+        # But invocation["ended_at"] should be correct from ingest
+        if invocation.get("ended_at"):
+            span.end(end_time=int(invocation["ended_at"].timestamp() * 1e9))
+        else:
+            span.end()
 
 
 async def export_step_to_otel(

@@ -5,6 +5,10 @@ import Traces from './pages/Traces'
 import TraceDetail from './pages/TraceDetail'
 import Agents from './pages/Agents'
 import AgentDetail from './pages/AgentDetail'
+import Prompts from './pages/Prompts'
+import PromptDetail from './pages/PromptDetail'
+import Analytics from './pages/Analytics'
+import Sequence from './pages/Sequence'
 import Logs from './pages/Logs'
 import Metrics from './pages/Metrics'
 
@@ -17,6 +21,10 @@ function App() {
         <Route path="/traces/:traceId" element={<TraceDetail />} />
         <Route path="/agents" element={<Agents />} />
         <Route path="/agents/:agentId" element={<AgentDetail />} />
+        <Route path="/prompts" element={<Prompts />} />
+        <Route path="/prompts/:promptId" element={<PromptDetail />} />
+        <Route path="/analytics" element={<Analytics />} />
+        <Route path="/sequence" element={<Sequence />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/metrics" element={<Metrics />} />
       </Routes>

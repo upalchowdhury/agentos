@@ -260,3 +260,33 @@ FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 CREATE TRIGGER trg_alert_rules_updated
 BEFORE UPDATE ON alert_rules
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+------------------------------------------------------------
+-- Prompts & Version Control
+------------------------------------------------------------
+CREATE TABLE prompts (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    description TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_prompts_tenant_name ON prompts(tenant_id, name);
+
+CREATE TABLE prompt_versions (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    prompt_id   UUID NOT NULL REFERENCES prompts(id) ON DELETE CASCADE,
+    version     TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    variables   JSONB,
+    author      TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_prompt_versions_prompt ON prompt_versions(prompt_id);
+
+CREATE TRIGGER trg_prompts_updated
+BEFORE UPDATE ON prompts
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();

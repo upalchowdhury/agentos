@@ -46,6 +46,8 @@ class AgentOSClient:
         api_url: str,
         api_key: str,
         agent_id: str,
+        agent_name: str = "unknown-agent",
+        platform: str = "python-sdk",
         version_id: Optional[str] = None,
         auto_flush: bool = True,
         flush_interval: int = 10,
@@ -54,6 +56,8 @@ class AgentOSClient:
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
         self.agent_id = agent_id
+        self.agent_name = agent_name
+        self.platform = platform
         self.version_id = version_id
         self.auto_flush = auto_flush
         self.flush_interval = flush_interval
@@ -125,7 +129,7 @@ class AgentOSClient:
         )
 
         # Set as current recorder (thread-local)
-        _current_recorder.set(recorder)
+        _current_recorder.recorder = recorder
 
         # Create root span
         root_span_name = name or "invocation"
@@ -145,54 +149,84 @@ class AgentOSClient:
                     self.flush_spans(recorder)
 
                 # Clear current recorder
-                _current_recorder.set(None)
+                _current_recorder.recorder = None
 
     def flush_spans(self, recorder: SpanRecorder):
-        """Send recorded spans to AgentOS API"""
+        """Send recorded spans to AgentOS API via unified ingestion"""
         spans = recorder.get_spans()
 
         if not spans:
             logger.debug("No spans to flush")
             return
 
-        # Extract trace context
-        first_span = spans[0]
-        trace_id = first_span["trace_id"]
-
-        # Create trace context
-        trace_context = self.propagator.create_context(
-            trace_id=trace_id,
-            baggage={
-                "agent_id": self.agent_id,
-                "version_id": self.version_id or "",
-                "run_mode": "normal"
+        events = []
+        for span in spans:
+            # Map SpanData to AgentExecution schema
+            event = {
+                "id": str(uuid.uuid4()),
+                "platform": self.platform,
+                "tenantId": "default",  # Should be inferred by API key usually
+                "timestamp": span.get("end_ts") or span.get("start_ts"),
+                "agent": {
+                    "id": self.agent_id,
+                    "name": self.agent_name,
+                    "version": self.version_id or "v0",
+                    "type": "conversational"  # Default
+                },
+                "execution": {
+                    "traceId": span["trace_id"],
+                    "spanId": span["span_id"],
+                    "parentSpanId": span.get("parent_span_id"),
+                    "durationMs": span.get("duration_ms", 0),
+                    "status": span.get("status", "unknown")
+                },
+                "context": {
+                    "environment": "production",  # Could be parameterized
+                    "tags": span.get("metadata", {})
+                }
             }
-        )
 
-        payload = {
-            "spans": spans,
-            "trace_context": trace_context
-        }
+            # Add LLM data if present
+            if span.get("model_name"):
+                event["llm"] = {
+                    "provider": span.get("model_provider", "unknown"),
+                    "model": span.get("model_name"),
+                    "inputTokens": span.get("tokens_in", 0),
+                    "outputTokens": span.get("tokens_out", 0),
+                    "totalCostUsd": (span.get("cost_cents", 0) or 0) / 100.0
+                }
+
+            # Add IO data
+            if span.get("input_excerpt") or span.get("output_excerpt"):
+                event["io"] = {
+                    "input": span.get("input_excerpt"),
+                    "output": span.get("output_excerpt"),
+                    "piiDetected": False  # SDK doesn't detect PII yet
+                }
+
+            events.append(event)
+
+        payload = {"events": events}
 
         try:
             response = self.session.post(
-                f"{self.api_url}/v1/spans/ingest",
+                f"{self.api_url}/v1/telemetry/events",
                 json=payload,
                 timeout=5
             )
 
             if response.status_code >= 300:
                 logger.error(
-                    f"Failed to flush spans: HTTP {response.status_code} - {response.text}"
+                    f"Failed to flush events: HTTP {response.status_code} - {response.text}"
                 )
             else:
                 result = response.json()
                 logger.info(
-                    f"Flushed {result.get('spans_ingested', 0)} spans for trace {trace_id}"
+                    f"Flushed {result.get('accepted', 0)} events for trace {recorder.trace_id}"
                 )
 
         except Exception as e:
-            logger.error(f"Error flushing spans: {e}")
+            logger.error(f"Error flushing events: {e}")
 
     def create_edge(
         self,

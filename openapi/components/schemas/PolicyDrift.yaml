@@ -1,0 +1,18 @@
+type: object
+properties:
+  agentId:
+    type: string
+  policyName:
+    type: string
+  violationTrend:
+    type: string
+    enum: [increasing, decreasing, stable]
+  currentViolationRate:
+    type: number
+    format: float
+  previousViolationRate:
+    type: number
+    format: float
+  changePercentage:
+    type: number
+    format: float

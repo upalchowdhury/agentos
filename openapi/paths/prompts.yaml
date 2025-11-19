@@ -1,0 +1,72 @@
+paths:
+  /v1/prompts:
+    get:
+      tags: [Prompts]
+      summary: List prompts.
+      operationId: listPrompts
+      security:
+        - OAuth2: [read]
+      responses:
+        '200':
+          description: List of prompts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: ../components/schemas/Prompt.yaml
+    post:
+      tags: [Prompts]
+      summary: Create a new prompt.
+      operationId: createPrompt
+      security:
+        - OAuth2: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/Prompt.yaml
+      responses:
+        '201':
+          description: Prompt created.
+          content:
+            application/json:
+              schema:
+                $ref: ../components/schemas/Prompt.yaml
+
+  /v1/prompts/{promptId}/versions:
+    get:
+      tags: [Prompts]
+      summary: List versions of a prompt.
+      operationId: listPromptVersions
+      security:
+        - OAuth2: [read]
+      responses:
+        '200':
+          description: List of prompt versions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: ../components/schemas/PromptVersion.yaml
+    post:
+      tags: [Prompts]
+      summary: Create a new version of a prompt.
+      operationId: createPromptVersion
+      security:
+        - OAuth2: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../components/schemas/PromptVersion.yaml
+      responses:
+        '201':
+          description: Prompt version created.
+          content:
+            application/json:
+              schema:
+                $ref: ../components/schemas/PromptVersion.yaml

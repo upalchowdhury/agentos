@@ -71,10 +71,22 @@ class ATPStep(BaseModel):
     output_excerpt: Optional[str] = None
 
 
-class ATPEvent(BaseModel):
-    """Complete ATP v0 Event"""
-    trace: ATPTrace
-    steps: List[ATPStep] = Field(default_factory=list)
+class AgentExecution(BaseModel):
+    """Unified Agent Execution Schema"""
+    id: str
+    platform: str
+    tenantId: Optional[str] = None
+    timestamp: str
+    agent: Dict[str, Any]
+    execution: Dict[str, Any]
+    llm: Optional[Dict[str, Any]] = None
+    io: Optional[Dict[str, Any]] = None
+    context: Optional[Dict[str, Any]] = None
+    toolsCalled: Optional[List[Dict[str, Any]]] = None
+
+class TelemetryBatch(BaseModel):
+    """Batch of telemetry events"""
+    events: List[AgentExecution]
 
 
 @asynccontextmanager
@@ -128,16 +140,14 @@ app = FastAPI(
 
 
 @app.post("/v1/telemetry/events")
-async def ingest_event(event: ATPEvent, background_tasks: BackgroundTasks):
+async def ingest_events(batch: TelemetryBatch, background_tasks: BackgroundTasks):
     """
-    Ingest ATP v0 telemetry event
-    Buffers events and writes in batches for performance
-    
-    Performance target: p95 < 200ms, sustain 500 RPS for 2 min
+    Ingest telemetry events (Unified Schema)
     """
     try:
         # Add to buffer
-        event_buffer.append(event.model_dump())
+        for event in batch.events:
+            event_buffer.append(event.model_dump())
         
         # If buffer is full, flush immediately
         if len(event_buffer) >= BATCH_SIZE:
@@ -145,12 +155,12 @@ async def ingest_event(event: ATPEvent, background_tasks: BackgroundTasks):
         
         return {
             "status": "accepted",
-            "trace_id": event.trace.trace_id,
+            "accepted": len(batch.events),
             "buffered_count": len(event_buffer),
         }
     
     except Exception as e:
-        logger.error(f"Failed to buffer event: {e}")
+        logger.error(f"Failed to buffer events: {e}")
         raise HTTPException(status_code=500, detail=f"Ingest failed: {str(e)}")
 
 
@@ -236,76 +246,128 @@ async def write_events_to_db(events: List[Dict[str, Any]]):
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             for event_data in events:
-                trace = event_data["trace"]
-                steps = event_data.get("steps", [])
-                
-                # Parse timestamps
-                start_ts = parse_timestamp(trace["start_ts"])
-                end_ts = parse_timestamp(trace["end_ts"])
-                
-                # Validate agent exists
-                try:
-                    agent_id = UUID(trace["agent_id"])
-                except ValueError:
-                    logger.warning(f"Invalid agent_id: {trace['agent_id']}")
-                    continue
-                
-                agent = await conn.fetchrow(
-                    "SELECT id FROM agents WHERE id = $1",
-                    agent_id,
-                )
-                
-                if not agent:
-                    logger.warning(f"Agent not found: {agent_id}")
-                    continue
-                
-                # Insert or update invocation
-                try:
-                    invocation_id = UUID(trace["invocation_id"])
-                except ValueError:
-                    logger.warning(f"Invalid invocation_id: {trace['invocation_id']}")
-                    continue
-                
-                # Build metadata with trace and steps
-                metadata = {
-                    "trace_id": trace["trace_id"],
-                    "protocol": trace["protocol"],
-                    "policy_enforced": trace.get("policy_enforced", []),
-                    "signature_verified": trace.get("signature_verified", False),
-                    "provider_adapter": trace.get("provider_adapter"),
-                    "steps": steps,
-                    "telemetry_source": "atp_ingest",
-                }
-                
-                # Get requester_id from trace or use default
-                requester_id = trace.get("org_id") or trace.get("requester_id") or "atp-telemetry"
-                
-                await conn.execute(
-                    """
-                    INSERT INTO invocations (
-                        id, agent_id, requester_id, status, 
-                        started_at, ended_at, execution_time_ms,
-                        cost_decimal, error_message, metadata
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                    ON CONFLICT (id) DO UPDATE SET
-                        status = EXCLUDED.status,
-                        ended_at = EXCLUDED.ended_at,
-                        execution_time_ms = EXCLUDED.execution_time_ms,
-                        cost_decimal = EXCLUDED.cost_decimal,
-                        error_message = EXCLUDED.error_message,
-                        metadata = EXCLUDED.metadata
-                    """,
-                    invocation_id,
-                    agent_id,
-                    requester_id,
-                    trace["status"].upper(),
-                    start_ts,
-                    end_ts,
-                    trace["execution_time_ms"],
-                    trace["cost_cents"] / 100.0,
-                    trace.get("error_message"),
-                    json.dumps(metadata),
-                )
+                # Handle Unified Schema (AgentExecution)
+                if "execution" in event_data:
+                    await write_unified_event(conn, event_data)
+                # Handle Legacy ATP Schema
+                elif "trace" in event_data:
+                    await write_legacy_event(conn, event_data)
+
+async def write_unified_event(conn, event: Dict[str, Any]):
+    """Write Unified Schema event to DB"""
+    try:
+        invocation_id = UUID(event["id"])
+        agent_id = UUID(event["agent"]["id"])
+    except ValueError:
+        logger.warning(f"Invalid UUID in event {event.get('id')}")
+        return
+
+    # Parse timestamp
+    ts = parse_timestamp(event["timestamp"])
+    
+    # Extract execution details
+    exec_data = event["execution"]
+    status = exec_data["status"].upper()
+    duration_ms = exec_data.get("durationMs", 0)
+    
+    # Calculate cost
+    cost_usd = 0.0
+    if event.get("llm"):
+        cost_usd = event["llm"].get("totalCostUsd", 0.0)
+
+    # Prepare metadata
+    metadata = event.copy()
+    metadata["telemetry_source"] = "unified_ingest"
+    
+    # Upsert invocation
+    await conn.execute(
+        """
+        INSERT INTO invocations (
+            id, agent_id, requester_id, status, 
+            started_at, ended_at, execution_time_ms,
+            cost_decimal, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (id) DO UPDATE SET
+            status = EXCLUDED.status,
+            ended_at = EXCLUDED.ended_at,
+            execution_time_ms = EXCLUDED.execution_time_ms,
+            cost_decimal = EXCLUDED.cost_decimal,
+            metadata = EXCLUDED.metadata
+        """,
+        invocation_id,
+        agent_id,
+        event.get("context", {}).get("userId", "unknown"),
+        status,
+        ts, # started_at
+        ts, # ended_at (approximate for now if single event)
+        duration_ms,
+        cost_usd,
+        json.dumps(metadata),
+    )
+
+async def write_legacy_event(conn, event_data: Dict[str, Any]):
+    """Write Legacy ATP event to DB"""
+    trace = event_data["trace"]
+    steps = event_data.get("steps", [])
+    
+    # Parse timestamps
+    start_ts = parse_timestamp(trace["start_ts"])
+    end_ts = parse_timestamp(trace["end_ts"])
+    
+    # Validate agent exists
+    try:
+        agent_id = UUID(trace["agent_id"])
+    except ValueError:
+        logger.warning(f"Invalid agent_id: {trace['agent_id']}")
+        return
+    
+    # Insert or update invocation
+    try:
+        invocation_id = UUID(trace["invocation_id"])
+    except ValueError:
+        logger.warning(f"Invalid invocation_id: {trace['invocation_id']}")
+        return
+    
+    # Build metadata with trace and steps
+    metadata = {
+        "trace_id": trace["trace_id"],
+        "protocol": trace["protocol"],
+        "policy_enforced": trace.get("policy_enforced", []),
+        "signature_verified": trace.get("signature_verified", False),
+        "provider_adapter": trace.get("provider_adapter"),
+        "steps": steps,
+        "telemetry_source": "atp_ingest",
+    }
+    
+    # Get requester_id from trace or use default
+    requester_id = trace.get("org_id") or trace.get("requester_id") or "atp-telemetry"
+    
+    await conn.execute(
+        """
+        INSERT INTO invocations (
+            id, agent_id, requester_id, status, 
+            started_at, ended_at, execution_time_ms,
+            cost_decimal, error_message, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ON CONFLICT (id) DO UPDATE SET
+            status = EXCLUDED.status,
+            ended_at = EXCLUDED.ended_at,
+            execution_time_ms = EXCLUDED.execution_time_ms,
+            cost_decimal = EXCLUDED.cost_decimal,
+            error_message = EXCLUDED.error_message,
+            metadata = EXCLUDED.metadata
+        """,
+        invocation_id,
+        agent_id,
+        requester_id,
+        trace["status"].upper(),
+        start_ts,
+        end_ts,
+        trace["execution_time_ms"],
+        trace["cost_cents"] / 100.0,
+        trace.get("error_message"),
+        json.dumps(metadata),
+    )
 
 
 def parse_timestamp(ts_str: str) -> datetime:

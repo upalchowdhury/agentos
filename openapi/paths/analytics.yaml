@@ -1,0 +1,80 @@
+paths:
+  /v1/analytics/risk:
+    get:
+      tags: [Analytics]
+      summary: Get risk metrics.
+      operationId: getRiskMetrics
+      security:
+        - OAuth2: [read]
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Risk metrics.
+          content:
+            application/json:
+              schema:
+                $ref: ../components/schemas/RiskMetrics.yaml
+
+  /v1/analytics/roi:
+    get:
+      tags: [Analytics]
+      summary: Get ROI metrics.
+      operationId: getROIMetrics
+      security:
+        - OAuth2: [read]
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: ROI metrics.
+          content:
+            application/json:
+              schema:
+                $ref: ../components/schemas/ROIMetrics.yaml
+
+  /v1/analytics/drift:
+    get:
+      tags: [Analytics]
+      summary: Get policy drift metrics.
+      operationId: getPolicyDrift
+      security:
+        - OAuth2: [read]
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Policy drift metrics.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: ../components/schemas/PolicyDrift.yaml

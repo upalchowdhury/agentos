@@ -1,0 +1,23 @@
+type: object
+properties:
+  piiDetectionRate:
+    type: number
+    format: float
+  policyViolationRate:
+    type: number
+    format: float
+  riskScore:
+    type: number
+    format: float
+    description: 0-100 score, higher is riskier
+  incidents:
+    type: integer
+  topRisks:
+    type: array
+    items:
+      type: object
+      properties:
+        category:
+          type: string
+        count:
+          type: integer

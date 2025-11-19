@@ -14,7 +14,12 @@ from typing import Any, Dict, List, Optional
 
 
 # Thread-local storage for current recorder
-_current_recorder = threading.local()
+# Thread-local storage for current recorder
+class RecorderContext(threading.local):
+    def __init__(self):
+        self.recorder = None
+
+_current_recorder = RecorderContext()
 
 
 @dataclass
@@ -263,7 +268,7 @@ def span(name: str, kind: str = "system"):
     with span("processing", "system"):
         ...
     """
-    recorder = _current_recorder.__dict__.get("recorder")
+    recorder = _current_recorder.recorder
     if recorder is None:
         # No-op if no active recorder
         yield None
